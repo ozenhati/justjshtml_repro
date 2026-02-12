@@ -4,7 +4,7 @@ Dependency-free JavaScript HTML5 parser (browser + Node.js) built as a port of t
 
 Primary goal: pass the full html5lib-tests suite (tokenizer, tree-construction, encoding, serializer fixtures) using only plain JavaScript.
 
-Background on this project: Simon Willison had ported JustHTML from Python to JS with Codex CLI and Gpt-5.2 in 4.5 hours during December 2025 (you can read his blog (here)[https://simonwillison.net/2025/Dec/15/porting-justhtml/]). Now that GPT-5.3-Codex is out, I recreated his experiment in under an hour (the ~4.9x speedup is incredible)!
+Background on this project: Simon Willison had ported JustHTML from Python to JS with Codex CLI and Gpt-5.2 in 4.5 hours during December 2025 (you can read his blog [here](https://simonwillison.net/2025/Dec/15/porting-justhtml/)). Now that GPT-5.3-Codex is out, I recreated his experiment in under an hour (the ~4.9x speedup is incredible)!
 
 
 ## Attribution / Acknowledgements
