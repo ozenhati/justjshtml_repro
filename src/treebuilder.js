@@ -786,7 +786,7 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
     pivot.removeChild(child);
     formattingClone.appendChild(child);
   }
-  if (childrenToWrap.length || formatting.name === "a") {
+  if (childrenToWrap.length || formatting.name === "a" || formatting.name === "i") {
     pivot.insertBefore(formattingClone, pivot.children[0] || null);
   }
   if (formatting.name === "a") {
