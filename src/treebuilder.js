@@ -138,6 +138,9 @@ export function buildTree(tokens, html, options = {}) {
           stack.pop();
         }
         let tokenData = token.data || "";
+        if (!fragment && isHeadNoscriptContext(stack) && /\S/.test(tokenData)) {
+          closeHeadNoscriptContext(stack);
+        }
         if (!fragment && seenDoctype && !documentElement && tokenData.startsWith("\n")) {
           tokenData = tokenData.slice(1);
         }
@@ -223,6 +226,14 @@ export function buildTree(tokens, html, options = {}) {
             ? (fragmentRootNamespaceOverride || fragmentDefaultNamespace(fragmentNamespace, fragmentContextTag))
             : (parent?.namespace || "html");
           const ns = inferNamespace(name, parent, defaultNamespace, token.attrs || {});
+          if (
+            ns === "math" &&
+            parent?.namespace === "math" &&
+            parent?.name === "mo" &&
+            (name === "tr" || name === "tbody" || name === "thead" || name === "tfoot")
+          ) {
+            break;
+          }
           if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
             while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
               stack.pop();
@@ -267,6 +278,21 @@ export function buildTree(tokens, html, options = {}) {
 
         if (name === "input" && String(token.attrs?.type || "").toLowerCase() !== "hidden") {
           framesetOk = false;
+        }
+
+        if (!fragment && isHeadNoscriptContext(stack)) {
+          if (name === "html") {
+            if (documentElement) {
+              Object.assign(documentElement.attrs, token.attrs || {});
+            }
+            break;
+          }
+          if (name === "head" || name === "noscript") {
+            break;
+          }
+          if (!(name === "link" || name === "meta" || name === "style" || name === "basefont" || name === "bgsound" || name === "noframes")) {
+            closeHeadNoscriptContext(stack);
+          }
         }
 
         if (name === "html") {
@@ -405,6 +431,14 @@ export function buildTree(tokens, html, options = {}) {
         }
 
         const ns = inferNamespace(name, parent, "html", token.attrs || {});
+        if (
+          ns === "math" &&
+          parent?.namespace === "math" &&
+          parent?.name === "mo" &&
+          (name === "tr" || name === "tbody" || name === "thead" || name === "tfoot")
+        ) {
+          break;
+        }
         if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
           while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
             stack.pop();
@@ -437,6 +471,18 @@ export function buildTree(tokens, html, options = {}) {
           findOpenElement(stack, "menuitem") >= 0
         ) {
           break;
+        }
+        if (!fragment && isHeadNoscriptContext(stack)) {
+          if (token.name === "noscript") {
+            stack.length = Math.max(1, stack.length - 1);
+            break;
+          }
+          if (token.name === "p") {
+            break;
+          }
+          if (token.name === "br") {
+            closeHeadNoscriptContext(stack);
+          }
         }
         if (fragment) {
           const topNamespace = stack[stack.length - 1]?.namespace;
@@ -1097,4 +1143,30 @@ function toLineCol(text, offset) {
     line: parts.length,
     column: parts[parts.length - 1].length + 1
   };
+}
+
+function isHeadNoscriptContext(stack) {
+  if (!stack.length || stack[stack.length - 1]?.name !== "noscript") {
+    return false;
+  }
+  for (let i = stack.length - 2; i >= 0; i -= 1) {
+    if (stack[i]?.name === "head") {
+      return true;
+    }
+    if (stack[i]?.name === "html") {
+      return false;
+    }
+  }
+  return false;
+}
+
+function closeHeadNoscriptContext(stack) {
+  while (stack.length > 1) {
+    const top = stack[stack.length - 1];
+    if (top?.name === "noscript" || top?.name === "head") {
+      stack.pop();
+      continue;
+    }
+    break;
+  }
 }

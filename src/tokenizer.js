@@ -337,6 +337,7 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
   let i = offset;
   let scriptDataEscaped = false;
   let scriptDataDoubleEscaped = false;
+  let skippedBogusEscapedClose = false;
 
   while (i < lowerHTML.length) {
     if (!scriptDataEscaped && lowerHTML.startsWith("<!--", i)) {
@@ -375,11 +376,12 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
       const lastScriptStart = lowerHTML.lastIndexOf("<script", i);
       const lastTagClose = lowerHTML.lastIndexOf(">", i);
       const lastScriptAfter = lastScriptStart >= 0 ? (lowerHTML[lastScriptStart + 7] || "") : "";
-      if (scriptDataEscaped && lastScriptStart > lastTagClose && lastScriptAfter === "/") {
+      if (scriptDataEscaped && lastScriptStart > lastTagClose && lastScriptAfter === "/" && !skippedBogusEscapedClose) {
         const skippedEnd = findTagCloseIndex(lowerHTML, i + 8);
         if (skippedEnd < 0) {
           return -1;
         }
+        skippedBogusEscapedClose = true;
         i = skippedEnd + 1;
         continue;
       }
