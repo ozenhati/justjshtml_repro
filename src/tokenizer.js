@@ -67,7 +67,6 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
         break;
       }
       emitError(errors, collectErrors, "eof-in-tag", "Unexpected EOF in tag", lt, html);
-      emitText(html.slice(lt), lt, tokens);
       break;
     }
 
@@ -137,13 +136,18 @@ function emitText(text, pos, tokens, preserveEntities = false) {
   if (!text) {
     return;
   }
+  text = normalizeNewlines(String(text));
   const normalized = preserveEntities
-    ? String(text).replaceAll("\u0000", "\ufffd")
-    : decodeCharacterReferences(text).replaceAll("\u0000", "");
+    ? String(text)
+    : decodeCharacterReferences(text);
   if (!normalized) {
     return;
   }
   tokens.push({ kind: TokenKind.TEXT, data: normalized, pos });
+}
+
+function normalizeNewlines(value) {
+  return String(value).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function emitError(errors, collectErrors, code, message, pos, html) {

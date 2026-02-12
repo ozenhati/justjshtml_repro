@@ -135,7 +135,24 @@ export function buildTree(tokens, html, options = {}) {
         if (!token.data) {
           break;
         }
-        const textNode = new Text(token.data);
+        let textData = token.data;
+        const parentForText = currentNode(stack, root, bodyElement);
+        if (parentForText?.namespace === "html") {
+          if (parentForText.name === "script" || parentForText.name === "style") {
+            textData = textData.replaceAll("\u0000", "\ufffd");
+          } else {
+            textData = textData.replaceAll("\u0000", "");
+          }
+        } else {
+          textData = textData.replaceAll("\u0000", "\ufffd");
+        }
+        if (parentForText?.name === "pre" && parentForText.children.length === 0 && textData.startsWith("\n")) {
+          textData = textData.slice(1);
+        }
+        if (!textData) {
+          break;
+        }
+        const textNode = new Text(textData);
         maybeSetLocation(textNode, token.pos, html, trackNodeLocations);
         if (!fragment && shouldFosterParentText(stack)) {
           fosterParentInsert(textNode, stack, bodyElement);
@@ -159,7 +176,8 @@ export function buildTree(tokens, html, options = {}) {
           const element = createElement(name, token.attrs, ns);
           maybeSetLocation(element, token.pos, html, trackNodeLocations);
           parent.appendChild(element);
-          if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
+          const selfClosingHonored = token.selfClosing && (ns !== "html" || VOID_ELEMENTS.has(name));
+          if (!selfClosingHonored && !VOID_ELEMENTS.has(name)) {
             stack.push(element);
           }
           break;
@@ -221,11 +239,21 @@ export function buildTree(tokens, html, options = {}) {
             bodyElement = createElement("body", token.attrs, "html");
             maybeSetLocation(bodyElement, token.pos, html, trackNodeLocations);
             documentElement.appendChild(bodyElement);
+          } else {
+            for (const [key, value] of Object.entries(token.attrs || {})) {
+              if (!(key in bodyElement.attrs)) {
+                bodyElement.attrs[key] = value;
+              }
+            }
           }
           ensureDocumentOnStack(stack, documentElement);
           stack.length = 2;
           stack.push(bodyElement);
           break;
+        }
+
+        if (!fragment) {
+          applySelectStartTagHeuristics(name, stack);
         }
 
         let parent = chooseParent(stack, bodyElement, headElement, name);
@@ -237,7 +265,8 @@ export function buildTree(tokens, html, options = {}) {
           const fostered = createElement(name, token.attrs, ns);
           maybeSetLocation(fostered, token.pos, html, trackNodeLocations);
           fosterParentInsert(fostered, stack, bodyElement);
-          if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
+          const selfClosingHonored = token.selfClosing && (ns !== "html" || VOID_ELEMENTS.has(name));
+          if (!selfClosingHonored && !VOID_ELEMENTS.has(name)) {
             stack.push(fostered);
           }
           break;
@@ -245,6 +274,10 @@ export function buildTree(tokens, html, options = {}) {
 
         if (!fragment && (name === "td" || name === "th")) {
           ensureTableCellContext(stack, bodyElement);
+          parent = currentNode(stack, root, bodyElement);
+        }
+        if (!fragment && name === "tr") {
+          ensureTableRowContext(stack, bodyElement);
           parent = currentNode(stack, root, bodyElement);
         }
 
@@ -281,10 +314,17 @@ export function buildTree(tokens, html, options = {}) {
         }
 
         const ns = inferNamespace(name, parent, "html", token.attrs || {});
+        if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
+          while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
+            stack.pop();
+          }
+          parent = currentNode(stack, root, bodyElement);
+        }
         const element = createElement(name, token.attrs, ns);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
-        if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
+        const selfClosingHonored = token.selfClosing && (ns !== "html" || VOID_ELEMENTS.has(name));
+        if (!selfClosingHonored && !VOID_ELEMENTS.has(name)) {
           stack.push(element);
           if (reopenInsideNewElement.length) {
             let current = element;
@@ -301,6 +341,9 @@ export function buildTree(tokens, html, options = {}) {
       case TokenKind.END_TAG: {
         if (fragment && fragmentNamespace !== "html") {
           if (token.name === "p" || token.name === "br") {
+            while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
+              stack.pop();
+            }
             const synthetic = createElement(token.name, {}, "html");
             root.appendChild(synthetic);
             break;
@@ -308,6 +351,11 @@ export function buildTree(tokens, html, options = {}) {
         }
         const foundIndex = findOpenElement(stack, token.name);
         if (foundIndex < 0) {
+          if (token.name === "br") {
+            const parent = currentNode(stack, root, bodyElement);
+            parent.appendChild(createElement("br", {}, inferNamespace("br", parent, "html", {})));
+            break;
+          }
           pushTreeError(errors, collectErrors, "unexpected-end-tag", `Unexpected </${token.name}> end tag`, token.pos, html);
           break;
         }
@@ -397,7 +445,8 @@ function ensureScaffold(root, getState, setState) {
     headElement = new Element("head", {}, "html");
     documentElement.appendChild(headElement);
   }
-  if (!bodyElement) {
+  const hasFrameset = documentElement.children.some((child) => child?.name === "frameset");
+  if (!bodyElement && !hasFrameset) {
     bodyElement = new Element("body", {}, "html");
     documentElement.appendChild(bodyElement);
   }
@@ -676,6 +725,81 @@ function ensureTableCellContext(stack, bodyElement) {
   stack.push(tr);
   if (bodyElement && table.parent == null) {
     bodyElement.appendChild(table);
+  }
+}
+
+function ensureTableRowContext(stack, bodyElement) {
+  const tableIndex = findNearestIndex(stack, "table");
+  if (tableIndex < 0) {
+    return;
+  }
+  const top = stack[stack.length - 1];
+  if (top && (top.name === "tbody" || top.name === "thead" || top.name === "tfoot")) {
+    return;
+  }
+  const table = stack[tableIndex];
+  let tbody = null;
+  for (let i = table.children.length - 1; i >= 0; i -= 1) {
+    const child = table.children[i];
+    if (child.name === "tbody" || child.name === "thead" || child.name === "tfoot") {
+      tbody = child;
+      break;
+    }
+  }
+  if (!tbody) {
+    tbody = new Element("tbody", {}, "html");
+    table.appendChild(tbody);
+  }
+  stack.length = tableIndex + 1;
+  stack.push(tbody);
+  if (bodyElement && table.parent == null) {
+    bodyElement.appendChild(table);
+  }
+}
+
+function applySelectStartTagHeuristics(tagName, stack) {
+  const selectIndex = findNearestIndex(stack, "select");
+  if (selectIndex < 0) {
+    return;
+  }
+
+  const optionIndex = findNearestIndex(stack, "option");
+  const optgroupIndex = findNearestIndex(stack, "optgroup");
+
+  if (tagName === "option") {
+    if (optionIndex > selectIndex) {
+      stack.length = optionIndex;
+    }
+    return;
+  }
+
+  if (tagName === "optgroup") {
+    if (optionIndex > selectIndex) {
+      stack.length = optionIndex;
+    }
+    if (optgroupIndex > selectIndex) {
+      stack.length = Math.min(stack.length, optgroupIndex);
+    }
+    return;
+  }
+
+  if (tagName === "hr") {
+    if (optionIndex > selectIndex) {
+      stack.length = optionIndex;
+    }
+    if (optgroupIndex > selectIndex) {
+      stack.length = Math.min(stack.length, optgroupIndex);
+    }
+    return;
+  }
+
+  if (tagName === "input" || tagName === "keygen" || tagName === "textarea") {
+    stack.length = selectIndex;
+    return;
+  }
+
+  if (tagName === "select") {
+    stack.length = selectIndex;
   }
 }
 

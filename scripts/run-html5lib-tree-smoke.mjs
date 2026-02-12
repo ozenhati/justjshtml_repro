@@ -108,7 +108,11 @@ function parseDat(content) {
       continue;
     }
     if (mode === "document-fragment") {
-      current.fragmentContext = parseFragmentContext(line.trim());
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      current.fragmentContext = parseFragmentContext(trimmed);
       continue;
     }
   }
