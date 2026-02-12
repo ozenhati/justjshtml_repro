@@ -26,33 +26,34 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
     }
 
     if (html.startsWith("<!--", lt)) {
-      const end = html.indexOf("-->", lt + 4);
-      if (end < 0) {
-        emitError(errors, collectErrors, "eof-in-comment", "Unexpected EOF in comment", lt, html);
-        tokens.push({ kind: TokenKind.COMMENT, data: html.slice(lt + 4), pos: lt });
+      const parsed = parseComment(html, lt, errors, collectErrors);
+      tokens.push({ kind: TokenKind.COMMENT, data: parsed.data, pos: lt });
+      i = parsed.nextIndex;
+      if (parsed.eof) {
         break;
       }
-      tokens.push({ kind: TokenKind.COMMENT, data: html.slice(lt + 4, end), pos: lt });
-      i = end + 3;
       continue;
     }
 
-    if (/^<!doctype\b/i.test(html.slice(lt, lt + 10))) {
+    if (/^<!doctype/i.test(html.slice(lt, lt + 10))) {
       const end = html.indexOf(">", lt + 2);
       if (end < 0) {
         emitError(errors, collectErrors, "eof-in-doctype", "Unexpected EOF in doctype", lt, html);
         break;
       }
       const chunk = html.slice(lt, end + 1);
-      const parts = chunk.replace(/[<>]/g, "").trim().split(/\s+/);
-      const name = (parts[1] || "html").toLowerCase();
-      tokens.push({ kind: TokenKind.DOCTYPE, name, publicId: null, systemId: null, pos: lt });
+      const dt = parseDoctype(chunk);
+      tokens.push({ kind: TokenKind.DOCTYPE, name: dt.name, publicId: dt.publicId, systemId: dt.systemId, pos: lt });
       i = end + 1;
       continue;
     }
 
     const end = html.indexOf(">", lt + 1);
     if (end < 0) {
+      if (html.startsWith("<?", lt)) {
+        tokens.push({ kind: TokenKind.COMMENT, data: html.slice(lt + 1), pos: lt });
+        break;
+      }
       emitError(errors, collectErrors, "eof-in-tag", "Unexpected EOF in tag", lt, html);
       emitText(html.slice(lt), lt, tokens);
       break;
@@ -60,6 +61,11 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
 
     const rawTag = html.slice(lt + 1, end).trim();
     if (!rawTag) {
+      i = end + 1;
+      continue;
+    }
+    if (rawTag.startsWith("?")) {
+      tokens.push({ kind: TokenKind.COMMENT, data: rawTag, pos: lt });
       i = end + 1;
       continue;
     }
@@ -154,4 +160,109 @@ function toLineCol(text, offset) {
     line: parts.length,
     column: parts[parts.length - 1].length + 1
   };
+}
+
+function parseComment(html, start, errors, collectErrors) {
+  const bodyStart = start + 4;
+  if (html[bodyStart] === ">" || html.startsWith("->", bodyStart)) {
+    const advance = html[bodyStart] === ">" ? 1 : 2;
+    return { data: "", nextIndex: bodyStart + advance, eof: false };
+  }
+
+  const endRegular = html.indexOf("-->", bodyStart);
+  const endBang = html.indexOf("--!>", bodyStart);
+
+  let end = -1;
+  let markerSize = 0;
+  if (endRegular >= 0 && (endBang < 0 || endRegular < endBang)) {
+    end = endRegular;
+    markerSize = 3;
+  } else if (endBang >= 0) {
+    end = endBang;
+    markerSize = 4;
+  }
+
+  if (end < 0) {
+    emitError(errors, collectErrors, "eof-in-comment", "Unexpected EOF in comment", start, html);
+    return { data: html.slice(bodyStart), nextIndex: html.length, eof: true };
+  }
+
+  return { data: html.slice(bodyStart, end), nextIndex: end + markerSize, eof: false };
+}
+
+function parseDoctype(chunk) {
+  const out = { name: "", publicId: null, systemId: null };
+  let text = chunk.replace(/^<!/i, "").replace(/>$/, "");
+  text = text.replace(/^doctype/i, "");
+
+  let i = 0;
+  skipSpaces();
+  out.name = readUntilSpace();
+  skipSpaces();
+
+  const kw = readKeyword();
+  if (kw === "public") {
+    skipSpaces();
+    out.publicId = readQuotedOrEmpty();
+    if (out.publicId != null) {
+      skipSpaces();
+      out.systemId = readQuotedOrEmpty();
+      if (out.systemId == null) {
+        out.systemId = "";
+      }
+    }
+  } else if (kw === "system") {
+    skipSpaces();
+    const sys = readQuotedOrEmpty();
+    if (sys != null) {
+      out.publicId = "";
+      out.systemId = sys;
+    }
+  }
+
+  return out;
+
+  function skipSpaces() {
+    while (i < text.length && /\s/.test(text[i])) {
+      i += 1;
+    }
+  }
+
+  function readUntilSpace() {
+    const start = i;
+    while (i < text.length && !/\s/.test(text[i])) {
+      i += 1;
+    }
+    return text.slice(start, i).toLowerCase();
+  }
+
+  function readKeyword() {
+    const save = i;
+    const word = readUntilSpace().toLowerCase();
+    if (word !== "public" && word !== "system") {
+      i = save;
+      return "";
+    }
+    return word;
+  }
+
+  function readQuotedOrEmpty() {
+    if (i >= text.length) {
+      return null;
+    }
+    const quote = text[i];
+    if (quote !== "\"" && quote !== "'") {
+      return null;
+    }
+    i += 1;
+    const start = i;
+    while (i < text.length && text[i] !== quote) {
+      i += 1;
+    }
+    const value = text.slice(start, i);
+    if (i < text.length && text[i] === quote) {
+      i += 1;
+    }
+    return value;
+  }
 }

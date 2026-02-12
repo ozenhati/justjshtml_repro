@@ -158,7 +158,14 @@ function renderTestFormat(node, indent, lines) {
   }
 
   if (node.name === "!doctype") {
-    lines.push(`${prefix}<!DOCTYPE ${node.data?.name || "html"}>`);
+    const name = node.data?.name ?? "html";
+    const publicId = node.data?.publicId;
+    const systemId = node.data?.systemId;
+    if (publicId != null || systemId != null) {
+      lines.push(`${prefix}<!DOCTYPE ${name} "${publicId ?? ""}" "${systemId ?? ""}">`);
+    } else {
+      lines.push(`${prefix}<!DOCTYPE ${name}>`);
+    }
     return;
   }
 

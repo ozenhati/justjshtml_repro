@@ -69,8 +69,28 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.COMMENT: {
+        if (!fragment) {
+          ensureScaffold(root, () => ({ documentElement, headElement, bodyElement }), (next) => {
+            documentElement = next.documentElement;
+            headElement = next.headElement;
+            bodyElement = next.bodyElement;
+          });
+          ensureDocumentOnStack(stack, documentElement);
+        }
         const comment = new Comment(token.data);
         maybeSetLocation(comment, token.pos, html, trackNodeLocations);
+        if (!fragment && (token.data || "").startsWith("?")) {
+          root.insertBefore(comment, root.children[0] || null);
+          break;
+        }
+        if (!fragment && stack[stack.length - 1]?.name === "html" && headElement && bodyElement) {
+          const headEmpty = headElement.children.length === 0;
+          const bodyEmpty = bodyElement.children.length === 0;
+          if (headEmpty && bodyEmpty) {
+            stack[stack.length - 1].insertBefore(comment, headElement);
+            break;
+          }
+        }
         currentNode(stack, root, bodyElement).appendChild(comment);
         break;
       }
@@ -282,6 +302,14 @@ export function buildTree(tokens, html, options = {}) {
     }
   }
 
+  if (!fragment) {
+    ensureScaffold(root, () => ({ documentElement, headElement, bodyElement }), (next) => {
+      documentElement = next.documentElement;
+      headElement = next.headElement;
+      bodyElement = next.bodyElement;
+    });
+  }
+
   return { root, errors };
 }
 
@@ -313,7 +341,7 @@ function ensureScaffold(root, getState, setState) {
 }
 
 function chooseParent(stack, bodyElement, headElement, tagName) {
-  const current = currentNode(stack, null, bodyElement);
+  const current = stack[stack.length - 1] || currentNode(stack, null, bodyElement);
   if (current.name === "html") {
     if (HEAD_TAGS.has(tagName)) {
       return headElement || current;
