@@ -209,6 +209,9 @@ export function buildTree(tokens, html, options = {}) {
         if (hasForeignContentAbove(stack, foundIndex)) {
           break;
         }
+        if (token.name === "b" && tryHoistTrailingAsideFromFormatting(stack, foundIndex)) {
+          break;
+        }
         if (token.name === "p") {
           const pNode = stack[foundIndex];
           const parent = pNode.parent;
@@ -644,6 +647,23 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
     }
     sprinkleFormattingOnBlockDescendants(child, formattingName, formattingAttrs);
   }
+}
+
+function tryHoistTrailingAsideFromFormatting(stack, formattingIndex) {
+  if (formattingIndex < 1 || formattingIndex >= stack.length - 1) {
+    return false;
+  }
+  const formatting = stack[formattingIndex];
+  const tail = stack[stack.length - 1];
+  if (!tail || tail.name !== "aside" || !tail.parent || !formatting.parent) {
+    return false;
+  }
+  tail.parent.removeChild(tail);
+  insertAfter(formatting.parent, tail, formatting);
+  const reopened = createElement("b", { ...(formatting.attrs || {}) }, "html");
+  tail.insertBefore(reopened, tail.children[0] || null);
+  stack.length = formattingIndex;
+  return true;
 }
 
 function maybeSetLocation(node, offset, html, enabled) {
