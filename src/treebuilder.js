@@ -385,6 +385,32 @@ export function buildTree(tokens, html, options = {}) {
           }
         }
 
+        if (!fragment) {
+          const tableIndex = findNearestIndex(stack, "table");
+          const topNs = currentNode(stack, root, bodyElement)?.namespace || "html";
+          if (tableIndex >= 0 && topNs === "html") {
+            if (name === "form") {
+              const table = stack[tableIndex];
+              const formInTable = createElement("form", token.attrs, "html");
+              maybeSetLocation(formInTable, token.pos, html, trackNodeLocations);
+              table.appendChild(formInTable);
+              break;
+            }
+            if (name === "input") {
+              const type = String(token.attrs?.type || "").toLowerCase();
+              const input = createElement("input", token.attrs, "html");
+              maybeSetLocation(input, token.pos, html, trackNodeLocations);
+              if (type === "hidden") {
+                const table = stack[tableIndex];
+                table.appendChild(input);
+              } else {
+                fosterParentInsert(input, stack, bodyElement);
+              }
+              break;
+            }
+          }
+        }
+
         let parent = chooseParent(stack, bodyElement, headElement, name);
         alignStackForParent(stack, parent, documentElement, headElement, bodyElement);
 
@@ -538,6 +564,9 @@ export function buildTree(tokens, html, options = {}) {
           ? findOpenElementInNamespace(stack, token.name, "html")
           : findOpenElement(stack, token.name);
         if (foundIndex < 0) {
+          if (token.name === "form") {
+            break;
+          }
           if (token.name === "br") {
             const parent = currentNode(stack, root, bodyElement);
             parent.appendChild(createElement("br", {}, inferNamespace("br", parent, "html", {})));

@@ -199,7 +199,11 @@ function formatForeignAttrName(node, key) {
     return key;
   }
   if (key.startsWith("xml:")) {
-    return `xml ${key.slice(4)}`;
+    const local = key.slice(4);
+    if (local === "base" || local === "lang" || local === "space") {
+      return `xml ${local}`;
+    }
+    return key;
   }
   if (key.startsWith("xlink:")) {
     return `xlink ${key.slice(6)}`;
