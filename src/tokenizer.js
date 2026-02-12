@@ -395,6 +395,14 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
     i += 1;
   }
 
+  const firstFallback = lowerHTML.indexOf("</script", offset);
+  if (firstFallback >= 0) {
+    const secondFallback = lowerHTML.indexOf("</script", firstFallback + 8);
+    if (secondFallback >= 0 && isTagBoundary(lowerHTML, secondFallback + 8)) {
+      return secondFallback;
+    }
+  }
+
   return -1;
 }
 
