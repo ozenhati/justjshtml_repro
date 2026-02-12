@@ -14,25 +14,26 @@ export class FragmentContext {
 
 export class JustHTML {
   constructor(input, options = {}) {
-    this.options = options;
+    const normalized = normalizeOptions(options);
+    this.options = normalized;
     this.fragmentContext = normalizeFragmentContext(options.fragmentContext);
 
-    const { text, encoding } = decodeHTML(input, options.encoding ?? null);
+    const { text, encoding } = decodeHTML(input, normalized.encoding ?? null);
     this.encoding = encoding;
 
-    const collectErrors = Boolean(options.collectErrors || options.strict);
+    const collectErrors = Boolean(normalized.collectErrors || normalized.strict);
     const tokenized = tokenizeHTML(text, { collectErrors });
     const built = buildTree(tokenized.tokens, text, {
-      fragment: Boolean(options.fragment || this.fragmentContext),
+      fragment: Boolean(normalized.fragment || this.fragmentContext),
       fragmentContext: this.fragmentContext,
       collectErrors,
-      trackNodeLocations: Boolean(options.trackNodeLocations)
+      trackNodeLocations: Boolean(normalized.trackNodeLocations)
     });
 
     this.root = built.root;
     this.errors = sortErrors([...(tokenized.errors || []), ...(built.errors || [])]);
 
-    if (options.strict && this.errors.length) {
+    if (normalized.strict && this.errors.length) {
       throw new StrictModeError(this.errors[0]);
     }
   }
@@ -51,6 +52,18 @@ export class JustHTML {
 
   toText(options = {}) {
     return this.root.toText(options);
+  }
+
+  to_html(options = {}) {
+    return this.toHTML(options);
+  }
+
+  to_text(options = {}) {
+    return this.toText(options);
+  }
+
+  query_one(selector) {
+    return this.queryOne(selector);
   }
 
   static escapeJSString(value, { quote = '"' } = {}) {
@@ -97,6 +110,7 @@ export function parseFragment(input, contextOrOptions = {}) {
 }
 
 export { HTML_CONTEXT as HTMLContext };
+export { matches, query } from "./selector.js";
 
 function normalizeFragmentContext(fragmentContext) {
   if (!fragmentContext) {
@@ -106,4 +120,25 @@ function normalizeFragmentContext(fragmentContext) {
     return fragmentContext;
   }
   return new FragmentContext(fragmentContext.tagName, fragmentContext.namespace ?? null);
+}
+
+function normalizeOptions(options) {
+  const normalized = { ...options };
+
+  const sanitizeProvided = normalized.sanitize !== undefined && normalized.sanitize !== null;
+  const safeProvided = normalized.safe !== undefined && normalized.safe !== null;
+
+  if (sanitizeProvided && safeProvided && Boolean(normalized.sanitize) !== Boolean(normalized.safe)) {
+    throw new Error("Conflicting values for sanitize and safe; use only sanitize=");
+  }
+
+  if (!sanitizeProvided && safeProvided) {
+    normalized.sanitize = Boolean(normalized.safe);
+  } else if (!sanitizeProvided && !safeProvided) {
+    normalized.sanitize = true;
+  } else {
+    normalized.sanitize = Boolean(normalized.sanitize);
+  }
+
+  return normalized;
 }

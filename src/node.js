@@ -1,4 +1,5 @@
 import { BLOCK_ELEMENTS } from "./constants.js";
+import { toHTML } from "./serialize.js";
 
 export class Node {
   constructor(name, { attrs = null, data = null, namespace = null } = {}) {
@@ -131,6 +132,14 @@ export class Node {
     return null;
   }
 
+  toHTML(options = {}) {
+    return toHTML(this, options);
+  }
+
+  to_html(options = {}) {
+    return this.toHTML(options);
+  }
+
   toText({ separator = " ", strip = true, separatorBlocksOnly = false } = {}) {
     const parts = [];
     const stack = [this];
@@ -171,6 +180,14 @@ export class Node {
     }
 
     return parts.join("");
+  }
+
+  to_text(options = {}) {
+    return this.toText(options);
+  }
+
+  query_one(selector) {
+    return this.queryOne(selector);
   }
 }
 

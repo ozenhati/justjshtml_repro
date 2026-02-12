@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FragmentContext, HTMLContext, JustHTML, parseFragment, stream } from "../src/index.js";
+import { FragmentContext, HTMLContext, JustHTML, matches, parseFragment, query, stream } from "../src/index.js";
 
 test("smoke test: parse simple valid document and core outcomes", () => {
   const input = "<!doctype html><html><body><p>Hello</p></body></html>";
@@ -49,6 +49,13 @@ test("selector subset supports tag, #id and .class", () => {
   assert.equal(doc.query("span.y").length, 1);
 });
 
+test("selector helper exports query/matches", () => {
+  const doc = new JustHTML('<div id="a" class="x y"><span class="y">ok</span></div>');
+  const span = doc.queryOne("span");
+  assert.equal(query(doc.root, ".y").length, 2);
+  assert.equal(matches(span, "span.y"), true);
+});
+
 test("collect_errors captures unmatched end tags", () => {
   const doc = new JustHTML("<p>hi</div>", { collectErrors: true });
   assert.equal(doc.errors.length, 2);
@@ -67,6 +74,21 @@ test("track_node_locations fills origin metadata", () => {
   assert.ok(p.originLine !== null);
   assert.ok(p.originCol !== null);
   assert.ok(Array.isArray(p.originLocation));
+});
+
+test("python-compat alias methods work", () => {
+  const doc = new JustHTML("<p>Hello</p>");
+  assert.equal(doc.to_text(), "Hello");
+  assert.ok(doc.query_one("p"));
+  const p = doc.query_one("p");
+  assert.equal(p.to_text(), "Hello");
+  assert.equal(p.to_html(), "<p>Hello</p>");
+});
+
+test("sanitize/safe option conflict throws", () => {
+  assert.throws(() => {
+    new JustHTML("<p>ok</p>", { sanitize: true, safe: false });
+  }, /Conflicting values/);
 });
 
 test("toHTML supports pretty output", () => {
@@ -101,4 +123,18 @@ test("byte input sets encoding and decodes", () => {
   const doc = new JustHTML(bytes);
   assert.equal(doc.encoding, "windows-1252");
   assert.equal(doc.toText(), "ok");
+});
+
+test("transport encoding override is respected", () => {
+  const bytes = new TextEncoder().encode("<p>ok</p>");
+  const doc = new JustHTML(bytes, { encoding: "utf-8" });
+  assert.equal(doc.encoding, "utf-8");
+  assert.equal(doc.toText(), "ok");
+});
+
+test("meta charset sniffing chooses utf-8", () => {
+  const bytes = new TextEncoder().encode('<meta charset="utf-8"><p>ok</p>');
+  const doc = new JustHTML(bytes);
+  assert.equal(doc.encoding, "utf-8");
+  assert.equal(doc.queryOne("p").toText(), "ok");
 });
