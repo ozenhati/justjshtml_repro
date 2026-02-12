@@ -138,7 +138,8 @@ export function toTestFormat(node, indent = 0) {
 }
 
 function renderTestFormat(node, indent, lines) {
-  const pad = " ".repeat(indent);
+  const pad = "  ".repeat(indent);
+  const prefix = `| ${pad}`;
   if (node.name === "#document" || node.name === "#document-fragment") {
     for (const child of node.children) {
       renderTestFormat(child, indent, lines);
@@ -147,26 +148,26 @@ function renderTestFormat(node, indent, lines) {
   }
 
   if (node.name === "#text") {
-    lines.push(`${pad}| \"${node.data || ""}\"`);
+    lines.push(`${prefix}"${node.data || ""}"`);
     return;
   }
 
   if (node.name === "#comment") {
-    lines.push(`${pad}| <!-- ${node.data || ""} -->`);
+    lines.push(`${prefix}<!-- ${node.data || ""} -->`);
     return;
   }
 
   if (node.name === "!doctype") {
-    lines.push(`${pad}| <!DOCTYPE ${node.data?.name || "html"}>`);
+    lines.push(`${prefix}<!DOCTYPE ${node.data?.name || "html"}>`);
     return;
   }
 
-  lines.push(`${pad}| <${node.name}>`);
+  lines.push(`${prefix}<${node.name}>`);
   const attrs = node.attrs || {};
   for (const [key, value] of Object.entries(attrs)) {
-    lines.push(`${pad}|   ${key}="${value ?? ""}"`);
+    lines.push(`${prefix}  ${key}="${value ?? ""}"`);
   }
   for (const child of node.children) {
-    renderTestFormat(child, indent + 2, lines);
+    renderTestFormat(child, indent + 1, lines);
   }
 }

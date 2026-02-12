@@ -36,7 +36,7 @@ export function buildTree(tokens, html, options = {}) {
       case TokenKind.COMMENT: {
         const comment = new Comment(token.data);
         maybeSetLocation(comment, token.pos, html, trackNodeLocations);
-        currentNode(stack, root).appendChild(comment);
+        currentNode(stack, root, bodyElement).appendChild(comment);
         break;
       }
       case TokenKind.TEXT: {
@@ -113,6 +113,7 @@ export function buildTree(tokens, html, options = {}) {
         }
 
         const parent = chooseParent(stack, bodyElement, headElement, name);
+        alignStackForParent(stack, parent, documentElement, headElement, bodyElement);
         const element = createElement(name, token.attrs);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
@@ -195,6 +196,10 @@ function chooseParent(stack, bodyElement, headElement, tagName) {
 
 function currentNode(stack, fallbackRoot, bodyElement = null) {
   if (stack.length > 1) {
+    const top = stack[stack.length - 1];
+    if (top && top.name === "html" && bodyElement) {
+      return bodyElement;
+    }
     return stack[stack.length - 1];
   }
   if (bodyElement) {
@@ -221,6 +226,24 @@ function ensureDocumentOnStack(stack, documentElement) {
     return;
   }
   stack[1] = documentElement;
+}
+
+function alignStackForParent(stack, parent, documentElement, headElement, bodyElement) {
+  if (!parent) {
+    return;
+  }
+  if (parent === bodyElement) {
+    ensureDocumentOnStack(stack, documentElement);
+    stack.length = 2;
+    stack.push(bodyElement);
+    return;
+  }
+  if (parent === headElement) {
+    ensureDocumentOnStack(stack, documentElement);
+    stack.length = 2;
+    stack.push(headElement);
+    return;
+  }
 }
 
 function maybeSetLocation(node, offset, html, enabled) {
