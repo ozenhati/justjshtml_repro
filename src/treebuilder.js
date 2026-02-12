@@ -359,6 +359,7 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
   if (formatting.name === "b") {
     formattingPrefix = formattingPrefix.filter((node) => node.name === "b");
   }
+  const trailingOpen = above.slice(pivotIdx + 1).filter((node) => !FORMATTING_TAGS.has(node.name));
 
   const originalPivotParent = pivot.parent;
   originalPivotParent.removeChild(pivot);
@@ -392,7 +393,9 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
     pivot.removeChild(child);
     formattingClone.appendChild(child);
   }
-  pivot.insertBefore(formattingClone, pivot.children[0] || null);
+  if (childrenToWrap.length || formatting.name === "a") {
+    pivot.insertBefore(formattingClone, pivot.children[0] || null);
+  }
   if (formatting.name === "a") {
     sprinkleFormattingOnBlockDescendants(pivot, formatting.name, formatting.attrs || {});
   }
@@ -402,6 +405,9 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
     stack.push(clone);
   }
   stack.push(pivot);
+  for (const node of trailingOpen) {
+    stack.push(node);
+  }
   return true;
 }
 
@@ -614,6 +620,9 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
       continue;
     }
     if (child.namespace && child.namespace !== "html") {
+      continue;
+    }
+    if (!child.children.length) {
       continue;
     }
     const clone = createElement(formattingName, { ...formattingAttrs }, "html");
