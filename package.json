@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:html5lib:tree:smoke": "node scripts/run-html5lib-tree-smoke.mjs"
   }
 }
