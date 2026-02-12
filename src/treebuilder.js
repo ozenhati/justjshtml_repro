@@ -352,7 +352,13 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
   }
 
   const pivotIdx = above.indexOf(pivot);
-  const formattingPrefix = above.slice(0, pivotIdx).filter((node) => FORMATTING_TAGS.has(node.name));
+  let formattingPrefix = above.slice(0, pivotIdx).filter((node) => FORMATTING_TAGS.has(node.name));
+  if (formattingPrefix.length > 1 && formattingPrefix[0].name !== formattingPrefix[1].name) {
+    formattingPrefix = formattingPrefix.slice(1);
+  }
+  if (formatting.name === "b") {
+    formattingPrefix = formattingPrefix.filter((node) => node.name === "b");
+  }
 
   const originalPivotParent = pivot.parent;
   originalPivotParent.removeChild(pivot);
@@ -374,12 +380,20 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
   }
 
   const formattingClone = createElement(formatting.name, { ...(formatting.attrs || {}) });
-  const childrenToWrap = [...pivot.children];
+  const childrenToWrap = [];
+  for (const child of pivot.children) {
+    if (isInlineLikeNode(child)) {
+      childrenToWrap.push(child);
+      continue;
+    }
+    break;
+  }
   for (const child of childrenToWrap) {
     pivot.removeChild(child);
     formattingClone.appendChild(child);
   }
   pivot.insertBefore(formattingClone, pivot.children[0] || null);
+  sprinkleFormattingOnBlockDescendants(pivot, formatting.name, formatting.attrs || {});
 
   stack.length = formattingIndex;
   for (const clone of reopenedPrefix) {
@@ -580,6 +594,30 @@ function findFosterParent(stack, bodyElement) {
     return table.parent || bodyElement || stack[0];
   }
   return bodyElement || stack[0];
+}
+
+function isInlineLikeNode(node) {
+  if (!node || typeof node.name !== "string") {
+    return false;
+  }
+  if (node.name.startsWith("#")) {
+    return true;
+  }
+  return FORMATTING_TAGS.has(node.name);
+}
+
+function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formattingAttrs) {
+  for (const child of rootNode.children) {
+    if (!child || child.name.startsWith("#") || FORMATTING_TAGS.has(child.name)) {
+      continue;
+    }
+    if (child.namespace && child.namespace !== "html") {
+      continue;
+    }
+    const clone = createElement(formattingName, { ...formattingAttrs }, "html");
+    child.insertBefore(clone, child.children[0] || null);
+    sprinkleFormattingOnBlockDescendants(child, formattingName, formattingAttrs);
+  }
 }
 
 function maybeSetLocation(node, offset, html, enabled) {
