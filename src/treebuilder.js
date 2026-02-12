@@ -393,7 +393,9 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
     formattingClone.appendChild(child);
   }
   pivot.insertBefore(formattingClone, pivot.children[0] || null);
-  sprinkleFormattingOnBlockDescendants(pivot, formatting.name, formatting.attrs || {});
+  if (formatting.name === "a") {
+    sprinkleFormattingOnBlockDescendants(pivot, formatting.name, formatting.attrs || {});
+  }
 
   stack.length = formattingIndex;
   for (const clone of reopenedPrefix) {
@@ -616,6 +618,21 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
     }
     const clone = createElement(formattingName, { ...formattingAttrs }, "html");
     child.insertBefore(clone, child.children[0] || null);
+    const leading = [];
+    for (const grandChild of child.children) {
+      if (grandChild === clone) {
+        continue;
+      }
+      if (isInlineLikeNode(grandChild)) {
+        leading.push(grandChild);
+        continue;
+      }
+      break;
+    }
+    for (const item of leading) {
+      child.removeChild(item);
+      clone.appendChild(item);
+    }
     sprinkleFormattingOnBlockDescendants(child, formattingName, formattingAttrs);
   }
 }
