@@ -5,14 +5,21 @@ import { TokenKind } from "./tokenizer.js";
 
 const HEAD_TAGS = new Set(["base", "link", "meta", "noscript", "script", "style", "template", "title"]);
 const FORMATTING_TAGS = new Set(["a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u"]);
+const A_REPARENT_BLOCKS = new Set(["div", "address"]);
 const CLOSE_P_ON_START = new Set([
   "address",
   "article",
   "aside",
   "blockquote",
+  "center",
+  "details",
+  "dialog",
+  "dir",
   "div",
   "dl",
   "fieldset",
+  "figcaption",
+  "figure",
   "footer",
   "form",
   "h1",
@@ -166,15 +173,31 @@ export function buildTree(tokens, html, options = {}) {
           parent = currentNode(stack, root, bodyElement);
         }
 
+        if (!fragment && name === "a") {
+          const openA = findOpenElement(stack, "a");
+          if (openA >= 0) {
+            stack.length = openA;
+            parent = currentNode(stack, root, bodyElement);
+          }
+        }
+
         let reopenInsideNewElement = [];
+        if (!fragment && A_REPARENT_BLOCKS.has(name)) {
+          const current = currentNode(stack, root, bodyElement);
+          if (current && current.name === "a") {
+            reopenInsideNewElement.push({ name: "a", attrs: { ...(current.attrs || {}) } });
+            stack.length = Math.max(1, stack.length - 1);
+            parent = currentNode(stack, root, bodyElement);
+          }
+        }
+
         if (!fragment && CLOSE_P_ON_START.has(name)) {
           const pIndex = findOpenElement(stack, "p");
           if (pIndex >= 0) {
             if (name === "p") {
               const above = stack.slice(pIndex + 1);
-              reopenInsideNewElement = above
-                .filter((node) => FORMATTING_TAGS.has(node.name))
-                .slice(0, -1)
+              const formattingAbove = above.filter((node) => FORMATTING_TAGS.has(node.name));
+              reopenInsideNewElement = (formattingAbove.length > 1 ? formattingAbove.slice(0, -1) : formattingAbove)
                 .map((node) => ({ name: node.name, attrs: { ...(node.attrs || {}) } }));
             }
             stack.length = pIndex;
@@ -358,9 +381,6 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
   let formattingPrefix = above.slice(0, pivotIdx).filter((node) => FORMATTING_TAGS.has(node.name));
   if (formattingPrefix.length > 1 && formattingPrefix[0].name !== formattingPrefix[1].name) {
     formattingPrefix = formattingPrefix.slice(1);
-  }
-  if (formatting.name === "b") {
-    formattingPrefix = formattingPrefix.filter((node) => node.name === "b");
   }
   const trailingOpen = above.slice(pivotIdx + 1).filter((node) => !FORMATTING_TAGS.has(node.name));
 
@@ -628,6 +648,14 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
     if (!child.children.length) {
       continue;
     }
+    if (
+      child.children.length === 1 &&
+      !isInlineLikeNode(child.children[0]) &&
+      child.children[0].children &&
+      child.children[0].children.length === 0
+    ) {
+      continue;
+    }
     const clone = createElement(formattingName, { ...formattingAttrs }, "html");
     child.insertBefore(clone, child.children[0] || null);
     const leading = [];
@@ -644,6 +672,11 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
     for (const item of leading) {
       child.removeChild(item);
       clone.appendChild(item);
+    }
+    if (!clone.children.length && child.children.length === 1 && !isInlineLikeNode(child.children[0])) {
+      const only = child.children[0];
+      child.removeChild(only);
+      clone.appendChild(only);
     }
     sprinkleFormattingOnBlockDescendants(child, formattingName, formattingAttrs);
   }
