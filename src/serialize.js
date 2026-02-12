@@ -179,6 +179,13 @@ function renderTestFormat(node, indent, lines) {
   for (const [key, value] of formattedAttrs) {
     lines.push(`${prefix}  ${key}="${value ?? ""}"`);
   }
+  if (node.name === "template" && node.templateContent) {
+    lines.push(`${prefix}  content`);
+    for (const child of coalesceTextNodes(node.templateContent.children)) {
+      renderTestFormat(child, indent + 2, lines);
+    }
+    return;
+  }
   for (const child of coalesceTextNodes(node.children)) {
     renderTestFormat(child, indent + 1, lines);
   }
@@ -200,7 +207,7 @@ function formatForeignAttrName(node, key) {
   }
   if (key.startsWith("xml:")) {
     const local = key.slice(4);
-    if (local === "base" || local === "lang" || local === "space") {
+    if (local === "lang" || local === "space") {
       return `xml ${local}`;
     }
     return key;

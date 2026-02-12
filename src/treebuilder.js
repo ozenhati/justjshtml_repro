@@ -389,9 +389,27 @@ export function buildTree(tokens, html, options = {}) {
           }
         }
 
+        if (!fragment && name === "caption") {
+          const tableIndex = findNearestIndex(stack, "table");
+          if (tableIndex >= 0) {
+            stack.length = tableIndex + 1;
+          }
+        }
+
         if (!fragment) {
           const tableIndex = findNearestIndex(stack, "table");
           const topNs = currentNode(stack, root, bodyElement)?.namespace || "html";
+          if (tableIndex >= 0) {
+            if (name === "table" && hasForeignContentAbove(stack, tableIndex)) {
+              while (stack.length > tableIndex + 1 && stack[stack.length - 1]?.namespace !== "html") {
+                stack.pop();
+              }
+              const fosteredTable = createElement("table", token.attrs, "html");
+              maybeSetLocation(fosteredTable, token.pos, html, trackNodeLocations);
+              fosterParentInsert(fosteredTable, stack, bodyElement);
+              break;
+            }
+          }
           if (tableIndex >= 0 && topNs === "html") {
             if (name === "col") {
               const table = stack[tableIndex];
@@ -637,6 +655,10 @@ export function buildTree(tokens, html, options = {}) {
           if (tryMisnestedFormattingRecovery(stack, foundIndex)) {
             break;
           }
+        }
+        if ((token.name === "html" || token.name === "body") && stack.length > foundIndex + 1) {
+          afterBody = true;
+          break;
         }
         stack.length = foundIndex;
         if (token.name === "body" || token.name === "html") {
@@ -1055,6 +1077,22 @@ function applySelectStartTagHeuristics(tagName, stack) {
   }
 
   if (tagName === "select") {
+    stack.length = selectIndex;
+    return;
+  }
+
+  if (
+    tagName === "table" ||
+    tagName === "tbody" ||
+    tagName === "thead" ||
+    tagName === "tfoot" ||
+    tagName === "tr" ||
+    tagName === "td" ||
+    tagName === "th" ||
+    tagName === "caption" ||
+    tagName === "col" ||
+    tagName === "colgroup"
+  ) {
     stack.length = selectIndex;
   }
 }

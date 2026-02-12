@@ -29,40 +29,43 @@ export class Node {
     if (!node) {
       return;
     }
-    const last = this.children[this.children.length - 1];
+    const container = getChildContainer(this);
+    const last = container.children[container.children.length - 1];
     if (last && last.name === "#text" && node.name === "#text") {
       last.data = `${last.data || ""}${node.data || ""}`;
       return;
     }
-    this.children.push(node);
-    node.parent = this;
+    container.children.push(node);
+    node.parent = container;
   }
 
   removeChild(node) {
-    const index = this.children.indexOf(node);
+    const container = getChildContainer(this);
+    const index = container.children.indexOf(node);
     if (index >= 0) {
-      this.children.splice(index, 1);
+      container.children.splice(index, 1);
       node.parent = null;
     }
   }
 
   insertBefore(node, referenceNode) {
+    const container = getChildContainer(this);
     if (referenceNode == null) {
       this.appendChild(node);
       return;
     }
-    const index = this.children.indexOf(referenceNode);
+    const index = container.children.indexOf(referenceNode);
     if (index < 0) {
       throw new Error("Reference node is not a child of this node");
     }
     if (node.name === "#text") {
-      const prev = index > 0 ? this.children[index - 1] : null;
-      const next = this.children[index] || null;
+      const prev = index > 0 ? container.children[index - 1] : null;
+      const next = container.children[index] || null;
       if (prev && prev.name === "#text") {
         prev.data = `${prev.data || ""}${node.data || ""}`;
         if (next && next.name === "#text") {
           prev.data = `${prev.data || ""}${next.data || ""}`;
-          this.removeChild(next);
+          container.removeChild(next);
         }
         return;
       }
@@ -72,23 +75,24 @@ export class Node {
       }
     }
 
-    this.children.splice(index, 0, node);
-    node.parent = this;
+    container.children.splice(index, 0, node);
+    node.parent = container;
   }
 
   replaceChild(newNode, oldNode) {
-    const index = this.children.indexOf(oldNode);
+    const container = getChildContainer(this);
+    const index = container.children.indexOf(oldNode);
     if (index < 0) {
       throw new Error("The node to be replaced is not a child of this node");
     }
-    this.children[index] = newNode;
-    newNode.parent = this;
+    container.children[index] = newNode;
+    newNode.parent = container;
     oldNode.parent = null;
     return oldNode;
   }
 
   hasChildNodes() {
-    return this.children.length > 0;
+    return getChildContainer(this).children.length > 0;
   }
 
   cloneNode(deep = false) {
@@ -283,6 +287,13 @@ function createNodeLike(node) {
     data: node.data,
     namespace: node.namespace
   });
+}
+
+function getChildContainer(node) {
+  if (node && node.name === "template" && node.templateContent) {
+    return node.templateContent;
+  }
+  return node;
 }
 
 function buildSelectorMatcher(selector) {
