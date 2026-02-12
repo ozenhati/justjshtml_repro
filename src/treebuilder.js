@@ -69,6 +69,7 @@ export function buildTree(tokens, html, options = {}) {
   let afterBody = false;
   let framesetOk = true;
   let fragmentRootNamespaceOverride = null;
+  let closePOnTable = false;
 
   const stack = [root];
 
@@ -82,6 +83,9 @@ export function buildTree(tokens, html, options = {}) {
         const dt = new Doctype(token.name, token.publicId, token.systemId);
         maybeSetLocation(dt, token.pos, html, trackNodeLocations);
         root.appendChild(dt);
+        const publicId = String(token.publicId || "").toLowerCase();
+        const systemId = String(token.systemId || "").toLowerCase();
+        closePOnTable = publicId.includes("xhtml 1.0 frameset") && systemId.includes("xhtml1-frameset.dtd");
         break;
       }
       case TokenKind.COMMENT: {
@@ -89,7 +93,10 @@ export function buildTree(tokens, html, options = {}) {
         if (cdataMatch) {
           const parent = stack[stack.length - 1];
           if (parent?.namespace && parent.namespace !== "html") {
-            const normalized = cdataMatch[1].replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+            const normalized = cdataMatch[1]
+              .replace(/\r\n/g, "\n")
+              .replace(/\r/g, "\n")
+              .replaceAll("\u0000", "\ufffd");
             const cdataText = new Text(normalized);
             maybeSetLocation(cdataText, token.pos, html, trackNodeLocations);
             parent.appendChild(cdataText);
@@ -234,7 +241,12 @@ export function buildTree(tokens, html, options = {}) {
           ) {
             break;
           }
-          if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
+          if (
+            ns === "html" &&
+            parent?.namespace &&
+            parent.namespace !== "html" &&
+            parent?.name !== "foreignobject"
+          ) {
             while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
               stack.pop();
             }
@@ -389,11 +401,19 @@ export function buildTree(tokens, html, options = {}) {
           break;
         }
 
-        if (!fragment && (name === "td" || name === "th")) {
+        if (
+          !fragment &&
+          (name === "td" || name === "th") &&
+          (currentNode(stack, root, bodyElement)?.namespace || "html") === "html"
+        ) {
           ensureTableCellContext(stack, bodyElement);
           parent = currentNode(stack, root, bodyElement);
         }
-        if (!fragment && name === "tr") {
+        if (
+          !fragment &&
+          name === "tr" &&
+          (currentNode(stack, root, bodyElement)?.namespace || "html") === "html"
+        ) {
           ensureTableRowContext(stack, bodyElement);
           parent = currentNode(stack, root, bodyElement);
         }
@@ -416,7 +436,8 @@ export function buildTree(tokens, html, options = {}) {
           }
         }
 
-        if (!fragment && CLOSE_P_ON_START.has(name)) {
+        const shouldCloseP = CLOSE_P_ON_START.has(name) || (name === "table" && closePOnTable);
+        if (!fragment && shouldCloseP) {
           const pIndex = findOpenElement(stack, "p");
           if (pIndex >= 0) {
             if (name === "p") {
@@ -439,10 +460,23 @@ export function buildTree(tokens, html, options = {}) {
         ) {
           break;
         }
-        if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
+        if (
+          ns === "html" &&
+          parent?.namespace &&
+          parent.namespace !== "html" &&
+          parent?.name !== "foreignobject"
+        ) {
           while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
             stack.pop();
           }
+          parent = currentNode(stack, root, bodyElement);
+        }
+        if (!fragment && ns === "html" && (name === "td" || name === "th")) {
+          ensureTableCellContext(stack, bodyElement);
+          parent = currentNode(stack, root, bodyElement);
+        }
+        if (!fragment && ns === "html" && name === "tr") {
+          ensureTableRowContext(stack, bodyElement);
           parent = currentNode(stack, root, bodyElement);
         }
         const element = createElement(name, token.attrs, ns);
@@ -500,7 +534,9 @@ export function buildTree(tokens, html, options = {}) {
             break;
           }
         }
-        const foundIndex = findOpenElement(stack, token.name);
+        const foundIndex = TABLE_END_TAGS.has(token.name)
+          ? findOpenElementInNamespace(stack, token.name, "html")
+          : findOpenElement(stack, token.name);
         if (foundIndex < 0) {
           if (token.name === "br") {
             const parent = currentNode(stack, root, bodyElement);
@@ -511,6 +547,10 @@ export function buildTree(tokens, html, options = {}) {
           break;
         }
         if (hasForeignContentAbove(stack, foundIndex)) {
+          stack.length = foundIndex;
+          if (token.name === "body" || token.name === "html") {
+            afterBody = true;
+          }
           break;
         }
         if (token.name === "b" && tryHoistTrailingAsideFromFormatting(stack, foundIndex)) {
@@ -637,6 +677,15 @@ function currentNode(stack, fallbackRoot, bodyElement = null) {
 function findOpenElement(stack, name) {
   for (let i = stack.length - 1; i >= 1; i -= 1) {
     if (stack[i] && stack[i].name === name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function findOpenElementInNamespace(stack, name, namespace) {
+  for (let i = stack.length - 1; i >= 1; i -= 1) {
+    if (stack[i] && stack[i].name === name && (stack[i].namespace || "html") === namespace) {
       return i;
     }
   }
@@ -993,6 +1042,9 @@ function inferNamespace(tagName, parent, defaultNamespace = "html", attrs = {}) 
     if (parent.name === "foreignobject") {
       return "html";
     }
+    if (parent.namespace === "svg" && (parent.name === "desc" || parent.name === "title")) {
+      return "html";
+    }
     return parent.namespace;
   }
   return defaultNamespace || "html";
@@ -1144,6 +1196,8 @@ function toLineCol(text, offset) {
     column: parts[parts.length - 1].length + 1
   };
 }
+
+const TABLE_END_TAGS = new Set(["table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup"]);
 
 function isHeadNoscriptContext(stack) {
   if (!stack.length || stack[stack.length - 1]?.name !== "noscript") {
