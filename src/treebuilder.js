@@ -91,9 +91,11 @@ export function buildTree(tokens, html, options = {}) {
       case TokenKind.START_TAG: {
         const name = token.name;
         if (fragment) {
-          const element = createElement(name, token.attrs);
+          const parent = currentNode(stack, root);
+          const ns = inferNamespace(name, parent);
+          const element = createElement(name, token.attrs, ns);
           maybeSetLocation(element, token.pos, html, trackNodeLocations);
-          currentNode(stack, root).appendChild(element);
+          parent.appendChild(element);
           if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
             stack.push(element);
           }
@@ -109,7 +111,7 @@ export function buildTree(tokens, html, options = {}) {
 
         if (name === "html") {
           if (!documentElement) {
-            documentElement = createElement("html", token.attrs);
+            documentElement = createElement("html", token.attrs, "html");
             maybeSetLocation(documentElement, token.pos, html, trackNodeLocations);
             root.appendChild(documentElement);
             stack.length = 1;
@@ -122,7 +124,7 @@ export function buildTree(tokens, html, options = {}) {
 
         if (name === "head") {
           if (!headElement) {
-            headElement = createElement("head", token.attrs);
+            headElement = createElement("head", token.attrs, "html");
             maybeSetLocation(headElement, token.pos, html, trackNodeLocations);
             documentElement.appendChild(headElement);
           }
@@ -134,7 +136,7 @@ export function buildTree(tokens, html, options = {}) {
 
         if (name === "body") {
           if (!bodyElement) {
-            bodyElement = createElement("body", token.attrs);
+            bodyElement = createElement("body", token.attrs, "html");
             maybeSetLocation(bodyElement, token.pos, html, trackNodeLocations);
             documentElement.appendChild(bodyElement);
           }
@@ -148,7 +150,9 @@ export function buildTree(tokens, html, options = {}) {
         alignStackForParent(stack, parent, documentElement, headElement, bodyElement);
 
         if (!fragment && shouldFosterParentElement(stack, name)) {
-          const fostered = createElement(name, token.attrs);
+          const fosterParent = findFosterParent(stack, bodyElement);
+          const ns = inferNamespace(name, fosterParent);
+          const fostered = createElement(name, token.attrs, ns);
           maybeSetLocation(fostered, token.pos, html, trackNodeLocations);
           fosterParentInsert(fostered, stack, bodyElement);
           if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
@@ -162,19 +166,37 @@ export function buildTree(tokens, html, options = {}) {
           parent = currentNode(stack, root, bodyElement);
         }
 
+        let reopenInsideNewElement = [];
         if (!fragment && CLOSE_P_ON_START.has(name)) {
           const pIndex = findOpenElement(stack, "p");
           if (pIndex >= 0) {
+            if (name === "p") {
+              const above = stack.slice(pIndex + 1);
+              reopenInsideNewElement = above
+                .filter((node) => FORMATTING_TAGS.has(node.name))
+                .slice(0, -1)
+                .map((node) => ({ name: node.name, attrs: { ...(node.attrs || {}) } }));
+            }
             stack.length = pIndex;
             parent = currentNode(stack, root, bodyElement);
           }
         }
 
-        const element = createElement(name, token.attrs);
+        const ns = inferNamespace(name, parent);
+        const element = createElement(name, token.attrs, ns);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
         if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
           stack.push(element);
+          if (reopenInsideNewElement.length) {
+            let current = element;
+            for (const info of reopenInsideNewElement) {
+              const reopened = createElement(info.name, info.attrs);
+              current.appendChild(reopened);
+              stack.push(reopened);
+              current = reopened;
+            }
+          }
         }
         break;
       }
@@ -182,6 +204,27 @@ export function buildTree(tokens, html, options = {}) {
         const foundIndex = findOpenElement(stack, token.name);
         if (foundIndex < 0) {
           pushTreeError(errors, collectErrors, "unexpected-end-tag", `Unexpected </${token.name}> end tag`, token.pos, html);
+          break;
+        }
+        if (hasForeignContentAbove(stack, foundIndex)) {
+          break;
+        }
+        if (token.name === "p") {
+          const pNode = stack[foundIndex];
+          const parent = pNode.parent;
+          const above = stack.slice(foundIndex + 1).filter((node) => FORMATTING_TAGS.has(node.name));
+          stack.length = foundIndex;
+          if (parent && above.length) {
+            let prev = pNode;
+            let currentParent = parent;
+            for (const source of above) {
+              const clone = createElement(source.name, { ...(source.attrs || {}) });
+              insertAfter(currentParent, clone, prev);
+              stack.push(clone);
+              currentParent = clone;
+              prev = clone;
+            }
+          }
           break;
         }
         if (FORMATTING_TAGS.has(token.name)) {
@@ -216,11 +259,11 @@ export function buildTree(tokens, html, options = {}) {
   return { root, errors };
 }
 
-function createElement(name, attrs) {
+function createElement(name, attrs, namespace = "html") {
   if (name === "template") {
-    return new Template(name, attrs || {});
+    return new Template(name, attrs || {}, namespace);
   }
-  return new Element(name, attrs || {});
+  return new Element(name, attrs || {}, namespace);
 }
 
 function ensureScaffold(root, getState, setState) {
@@ -228,15 +271,15 @@ function ensureScaffold(root, getState, setState) {
   let { documentElement, headElement, bodyElement } = state;
 
   if (!documentElement) {
-    documentElement = new Element("html", {});
+    documentElement = new Element("html", {}, "html");
     root.appendChild(documentElement);
   }
   if (!headElement) {
-    headElement = new Element("head", {});
+    headElement = new Element("head", {}, "html");
     documentElement.appendChild(headElement);
   }
   if (!bodyElement) {
-    bodyElement = new Element("body", {});
+    bodyElement = new Element("body", {}, "html");
     documentElement.appendChild(bodyElement);
   }
 
@@ -308,9 +351,27 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
     return false;
   }
 
+  const pivotIdx = above.indexOf(pivot);
+  const formattingPrefix = above.slice(0, pivotIdx).filter((node) => FORMATTING_TAGS.has(node.name));
+
   const originalPivotParent = pivot.parent;
   originalPivotParent.removeChild(pivot);
-  insertAfter(formatting.parent, pivot, formatting);
+
+  let insertionPoint = formatting;
+  let reopenParent = formatting.parent;
+  const reopenedPrefix = [];
+  for (const source of formattingPrefix) {
+    const clone = createElement(source.name, { ...(source.attrs || {}) });
+    insertAfter(reopenParent, clone, insertionPoint);
+    reopenedPrefix.push(clone);
+    reopenParent = clone;
+    insertionPoint = clone;
+  }
+  if (reopenedPrefix.length) {
+    reopenParent.appendChild(pivot);
+  } else {
+    insertAfter(reopenParent, pivot, formatting);
+  }
 
   const formattingClone = createElement(formatting.name, { ...(formatting.attrs || {}) });
   const childrenToWrap = [...pivot.children];
@@ -321,6 +382,9 @@ function tryMisnestedFormattingRecovery(stack, formattingIndex) {
   pivot.insertBefore(formattingClone, pivot.children[0] || null);
 
   stack.length = formattingIndex;
+  for (const clone of reopenedPrefix) {
+    stack.push(clone);
+  }
   stack.push(pivot);
   return true;
 }
@@ -464,10 +528,10 @@ function ensureTableCellContext(stack, bodyElement) {
     }
   }
   if (!tbody) {
-    tbody = new Element("tbody", {});
+    tbody = new Element("tbody", {}, "html");
     table.appendChild(tbody);
   }
-  const tr = new Element("tr", {});
+  const tr = new Element("tr", {}, "html");
   tbody.appendChild(tr);
   stack.length = tableIndex + 1;
   stack.push(tbody);
@@ -484,6 +548,38 @@ function findNearestIndex(stack, name) {
     }
   }
   return -1;
+}
+
+function inferNamespace(tagName, parent) {
+  if (tagName === "svg") {
+    return "svg";
+  }
+  if (tagName === "math") {
+    return "math";
+  }
+  if (parent && parent.namespace && parent.namespace !== "html") {
+    return parent.namespace;
+  }
+  return "html";
+}
+
+function hasForeignContentAbove(stack, index) {
+  for (let i = stack.length - 1; i > index; i -= 1) {
+    const ns = stack[i]?.namespace;
+    if (ns && ns !== "html") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findFosterParent(stack, bodyElement) {
+  const tableIndex = findNearestIndex(stack, "table");
+  if (tableIndex > 0) {
+    const table = stack[tableIndex];
+    return table.parent || bodyElement || stack[0];
+  }
+  return bodyElement || stack[0];
 }
 
 function maybeSetLocation(node, offset, html, enabled) {

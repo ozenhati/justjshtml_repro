@@ -162,7 +162,8 @@ function renderTestFormat(node, indent, lines) {
     return;
   }
 
-  lines.push(`${prefix}<${node.name}>`);
+  const ns = node.namespace && node.namespace !== "html" ? `${node.namespace} ${node.name}` : node.name;
+  lines.push(`${prefix}<${ns}>`);
   const attrs = node.attrs || {};
   for (const [key, value] of Object.entries(attrs)) {
     lines.push(`${prefix}  ${key}="${value ?? ""}"`);
