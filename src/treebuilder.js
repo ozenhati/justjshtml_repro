@@ -4,6 +4,34 @@ import { Comment, Doctype, Document, DocumentFragment, Element, Template, Text }
 import { TokenKind } from "./tokenizer.js";
 
 const HEAD_TAGS = new Set(["base", "link", "meta", "noscript", "script", "style", "template", "title"]);
+const FORMATTING_TAGS = new Set(["a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u"]);
+const CLOSE_P_ON_START = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "div",
+  "dl",
+  "fieldset",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "ul"
+]);
 
 export function buildTree(tokens, html, options = {}) {
   const {
@@ -134,6 +162,14 @@ export function buildTree(tokens, html, options = {}) {
           parent = currentNode(stack, root, bodyElement);
         }
 
+        if (!fragment && CLOSE_P_ON_START.has(name)) {
+          const pIndex = findOpenElement(stack, "p");
+          if (pIndex >= 0) {
+            stack.length = pIndex;
+            parent = currentNode(stack, root, bodyElement);
+          }
+        }
+
         const element = createElement(name, token.attrs);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
@@ -147,6 +183,14 @@ export function buildTree(tokens, html, options = {}) {
         if (foundIndex < 0) {
           pushTreeError(errors, collectErrors, "unexpected-end-tag", `Unexpected </${token.name}> end tag`, token.pos, html);
           break;
+        }
+        if (FORMATTING_TAGS.has(token.name)) {
+          if (tryFormattingSplitRecovery(stack, foundIndex)) {
+            break;
+          }
+          if (tryMisnestedFormattingRecovery(stack, foundIndex)) {
+            break;
+          }
         }
         stack.length = foundIndex;
         break;
@@ -248,6 +292,75 @@ function ensureDocumentOnStack(stack, documentElement) {
   stack[1] = documentElement;
 }
 
+function tryMisnestedFormattingRecovery(stack, formattingIndex) {
+  if (formattingIndex < 1 || formattingIndex >= stack.length - 1) {
+    return false;
+  }
+
+  const formatting = stack[formattingIndex];
+  const above = stack.slice(formattingIndex + 1);
+  if (!above.length || above.every((node) => FORMATTING_TAGS.has(node.name))) {
+    return false;
+  }
+
+  const pivot = above.find((node) => !FORMATTING_TAGS.has(node.name));
+  if (!pivot || !pivot.parent || !formatting.parent) {
+    return false;
+  }
+
+  const originalPivotParent = pivot.parent;
+  originalPivotParent.removeChild(pivot);
+  insertAfter(formatting.parent, pivot, formatting);
+
+  const formattingClone = createElement(formatting.name, { ...(formatting.attrs || {}) });
+  const childrenToWrap = [...pivot.children];
+  for (const child of childrenToWrap) {
+    pivot.removeChild(child);
+    formattingClone.appendChild(child);
+  }
+  pivot.insertBefore(formattingClone, pivot.children[0] || null);
+
+  stack.length = formattingIndex;
+  stack.push(pivot);
+  return true;
+}
+
+function tryFormattingSplitRecovery(stack, formattingIndex) {
+  if (formattingIndex < 1 || formattingIndex >= stack.length - 1) {
+    return false;
+  }
+  const formatting = stack[formattingIndex];
+  const above = stack.slice(formattingIndex + 1);
+  if (!above.length || !above.every((node) => FORMATTING_TAGS.has(node.name))) {
+    return false;
+  }
+  if (!formatting.parent) {
+    return false;
+  }
+
+  const parent = formatting.parent;
+  let reopenParent = null;
+  const reopened = [];
+
+  for (let i = 0; i < above.length; i += 1) {
+    const source = above[i];
+    const clone = createElement(source.name, { ...(source.attrs || {}) });
+    if (i === 0) {
+      insertAfter(parent, clone, formatting);
+    } else {
+      reopenParent.appendChild(clone);
+    }
+    reopened.push(clone);
+    reopenParent = clone;
+  }
+
+  stack.length = formattingIndex;
+  for (const node of reopened) {
+    stack.push(node);
+  }
+  return true;
+}
+
 function alignStackForParent(stack, parent, documentElement, headElement, bodyElement) {
   if (!parent) {
     return;
@@ -266,6 +379,15 @@ function alignStackForParent(stack, parent, documentElement, headElement, bodyEl
   }
 }
 
+function insertAfter(parent, node, referenceNode) {
+  const idx = parent.children.indexOf(referenceNode);
+  if (idx < 0 || idx + 1 >= parent.children.length) {
+    parent.appendChild(node);
+    return;
+  }
+  parent.insertBefore(node, parent.children[idx + 1]);
+}
+
 function shouldFosterParentText(stack) {
   const top = stack[stack.length - 1];
   if (!top) {
@@ -279,7 +401,16 @@ function shouldFosterParentElement(stack, tagName) {
   if (!top || top.name !== "table") {
     return false;
   }
-  if (tagName === "caption" || tagName === "colgroup" || tagName === "tbody" || tagName === "tfoot" || tagName === "thead" || tagName === "tr") {
+  if (
+    tagName === "caption" ||
+    tagName === "colgroup" ||
+    tagName === "tbody" ||
+    tagName === "tfoot" ||
+    tagName === "thead" ||
+    tagName === "tr" ||
+    tagName === "td" ||
+    tagName === "th"
+  ) {
     return false;
   }
   return true;
@@ -298,6 +429,18 @@ function fosterParentInsert(node, stack, bodyElement) {
   if (!parent) {
     return;
   }
+
+  if (node.name === "#text") {
+    const tablePos = parent.children.indexOf(table);
+    const prevSibling = tablePos > 0 ? parent.children[tablePos - 1] : null;
+    if (prevSibling && prevSibling.name === "a") {
+      const aClone = createElement("a", { ...(prevSibling.attrs || {}) });
+      aClone.appendChild(node);
+      parent.insertBefore(aClone, table);
+      return;
+    }
+  }
+
   parent.insertBefore(node, table);
 }
 

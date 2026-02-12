@@ -141,7 +141,7 @@ function renderTestFormat(node, indent, lines) {
   const pad = "  ".repeat(indent);
   const prefix = `| ${pad}`;
   if (node.name === "#document" || node.name === "#document-fragment") {
-    for (const child of node.children) {
+    for (const child of coalesceTextNodes(node.children)) {
       renderTestFormat(child, indent, lines);
     }
     return;
@@ -167,7 +167,25 @@ function renderTestFormat(node, indent, lines) {
   for (const [key, value] of Object.entries(attrs)) {
     lines.push(`${prefix}  ${key}="${value ?? ""}"`);
   }
-  for (const child of node.children) {
+  for (const child of coalesceTextNodes(node.children)) {
     renderTestFormat(child, indent + 1, lines);
   }
+}
+
+function coalesceTextNodes(children) {
+  if (!children.length) {
+    return children;
+  }
+  const out = [];
+  for (const child of children) {
+    const prev = out[out.length - 1];
+    if (prev && prev.name === "#text" && child && child.name === "#text") {
+      prev.data = `${prev.data || ""}${child.data || ""}`;
+      continue;
+    }
+    if (child) {
+      out.push(child);
+    }
+  }
+  return out;
 }

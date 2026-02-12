@@ -29,6 +29,11 @@ export class Node {
     if (!node) {
       return;
     }
+    const last = this.children[this.children.length - 1];
+    if (last && last.name === "#text" && node.name === "#text") {
+      last.data = `${last.data || ""}${node.data || ""}`;
+      return;
+    }
     this.children.push(node);
     node.parent = this;
   }
@@ -50,6 +55,23 @@ export class Node {
     if (index < 0) {
       throw new Error("Reference node is not a child of this node");
     }
+    if (node.name === "#text") {
+      const prev = index > 0 ? this.children[index - 1] : null;
+      const next = this.children[index] || null;
+      if (prev && prev.name === "#text") {
+        prev.data = `${prev.data || ""}${node.data || ""}`;
+        if (next && next.name === "#text") {
+          prev.data = `${prev.data || ""}${next.data || ""}`;
+          this.removeChild(next);
+        }
+        return;
+      }
+      if (next && next.name === "#text") {
+        next.data = `${node.data || ""}${next.data || ""}`;
+        return;
+      }
+    }
+
     this.children.splice(index, 0, node);
     node.parent = this;
   }
