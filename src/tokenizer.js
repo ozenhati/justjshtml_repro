@@ -101,6 +101,11 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
     }
 
     if (rawTag.startsWith("/")) {
+      if (/^\s/.test(rawInner)) {
+        emitText(html.slice(lt, end + 1), lt, tokens);
+        i = end + 1;
+        continue;
+      }
       const endToken = parseEndTag(rawInner);
       if (endToken.kind === "comment") {
         tokens.push({ kind: TokenKind.COMMENT, data: endToken.data, pos: lt });
@@ -137,7 +142,11 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
         emitText(rawText, i, tokens, !shouldDecodeEntitiesInRaw(name));
       }
       tokens.push({ kind: TokenKind.END_TAG, name, pos: closeIdx });
-      i = closeIdx + 2 + name.length + 1;
+      const closeEnd = findTagCloseIndex(html, closeIdx + 2 + name.length);
+      if (closeEnd < 0) {
+        break;
+      }
+      i = closeEnd + 1;
     }
   }
 
@@ -337,7 +346,7 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
     }
 
     if (scriptDataEscaped && !scriptDataDoubleEscaped && lowerHTML.startsWith("<script", i) && isTagBoundary(lowerHTML, i + 7)) {
-      const end = lowerHTML.indexOf(">", i + 7);
+      const end = findTagCloseIndex(lowerHTML, i + 7);
       if (end < 0) {
         return -1;
       }
@@ -347,7 +356,7 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
     }
 
     if (scriptDataDoubleEscaped && lowerHTML.startsWith("</script", i) && isTagBoundary(lowerHTML, i + 8)) {
-      const end = lowerHTML.indexOf(">", i + 8);
+      const end = findTagCloseIndex(lowerHTML, i + 8);
       if (end < 0) {
         return -1;
       }
@@ -356,8 +365,25 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
       continue;
     }
 
+    if (scriptDataDoubleEscaped && lowerHTML.startsWith("-->", i)) {
+      scriptDataDoubleEscaped = false;
+      i += 3;
+      continue;
+    }
+
     if (!scriptDataDoubleEscaped && lowerHTML.startsWith("</script", i) && isTagBoundary(lowerHTML, i + 8)) {
-      const end = lowerHTML.indexOf(">", i + 8);
+      const lastScriptStart = lowerHTML.lastIndexOf("<script", i);
+      const lastTagClose = lowerHTML.lastIndexOf(">", i);
+      const lastScriptAfter = lastScriptStart >= 0 ? (lowerHTML[lastScriptStart + 7] || "") : "";
+      if (scriptDataEscaped && lastScriptStart > lastTagClose && lastScriptAfter === "/") {
+        const skippedEnd = findTagCloseIndex(lowerHTML, i + 8);
+        if (skippedEnd < 0) {
+          return -1;
+        }
+        i = skippedEnd + 1;
+        continue;
+      }
+      const end = findTagCloseIndex(lowerHTML, i + 8);
       if (end >= 0) {
         return i;
       }
@@ -373,6 +399,27 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
 function isTagBoundary(text, index) {
   const ch = text[index] || "";
   return ch === ">" || ch === "/" || /\s/.test(ch);
+}
+
+function findTagCloseIndex(text, fromIndex) {
+  let quote = "";
+  for (let i = Math.max(0, fromIndex); i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === ">") {
+      return i;
+    }
+  }
+  return -1;
 }
 
 function toLineCol(text, offset) {

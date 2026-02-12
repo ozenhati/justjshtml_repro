@@ -44,6 +44,7 @@ const CLOSE_P_ON_START = new Set([
   "p",
   "pre",
   "section",
+  "search",
   "summary",
   "table",
   "ul"
@@ -298,6 +299,37 @@ export function buildTree(tokens, html, options = {}) {
           applySelectStartTagHeuristics(name, stack);
         }
 
+        if (!fragment && name === "li") {
+          const liIndex = findOpenElement(stack, "li");
+          if (liIndex >= 0) {
+            stack.length = liIndex;
+          }
+        }
+        if (!fragment && (name === "dd" || name === "dt")) {
+          const ddIndex = findOpenElement(stack, "dd");
+          const dtIndex = findOpenElement(stack, "dt");
+          const closeIndex = Math.max(ddIndex, dtIndex);
+          if (closeIndex >= 0) {
+            stack.length = closeIndex;
+          }
+        }
+        if (!fragment && (name === "rb" || name === "rt" || name === "rp" || name === "rtc")) {
+          const rubyIndex = findOpenElement(stack, "ruby");
+          const rbIndex = findOpenElement(stack, "rb");
+          const rtIndex = findOpenElement(stack, "rt");
+          const rpIndex = findOpenElement(stack, "rp");
+          const rtcIndex = name === "rb" || name === "rtc" ? findOpenElement(stack, "rtc") : -1;
+          const closeIndex = Math.max(
+            rbIndex > rubyIndex ? rbIndex : -1,
+            rtIndex > rubyIndex ? rtIndex : -1,
+            rpIndex > rubyIndex ? rpIndex : -1,
+            rtcIndex > rubyIndex ? rtcIndex : -1
+          );
+          if (closeIndex >= 0) {
+            stack.length = closeIndex;
+          }
+        }
+
         let parent = chooseParent(stack, bodyElement, headElement, name);
         alignStackForParent(stack, parent, documentElement, headElement, bodyElement);
 
@@ -381,6 +413,14 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.END_TAG: {
+        if (
+          token.name === "menuitem" &&
+          stack[stack.length - 1]?.name !== "menuitem" &&
+          stack[stack.length - 1]?.name === "p" &&
+          findOpenElement(stack, "menuitem") >= 0
+        ) {
+          break;
+        }
         if (fragment) {
           const topNamespace = stack[stack.length - 1]?.namespace;
           if ((token.name === "p" || token.name === "br") && topNamespace !== "html") {
@@ -505,7 +545,7 @@ function ensureScaffold(root, getState, setState) {
 function chooseParent(stack, bodyElement, headElement, tagName) {
   const current = stack[stack.length - 1] || currentNode(stack, null, bodyElement);
   if (current.name === "html") {
-    if (HEAD_TAGS.has(tagName)) {
+    if (HEAD_TAGS.has(tagName) && bodyElement && bodyElement.children.length === 0) {
       return headElement || current;
     }
     return bodyElement || current;
