@@ -241,11 +241,15 @@ export function buildTree(tokens, html, options = {}) {
           ) {
             break;
           }
+          if (parent?.namespace === "svg" && parent?.name === "title" && SVG_TITLE_IGNORED_TAGS.has(name)) {
+            break;
+          }
           if (
             ns === "html" &&
             parent?.namespace &&
             parent.namespace !== "html" &&
-            parent?.name !== "foreignobject"
+            parent?.name !== "foreignobject" &&
+            !(parent?.namespace === "svg" && parent?.name === "title")
           ) {
             while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
               stack.pop();
@@ -490,12 +494,16 @@ export function buildTree(tokens, html, options = {}) {
           ns === "html" &&
           parent?.namespace &&
           parent.namespace !== "html" &&
-          parent?.name !== "foreignobject"
+          parent?.name !== "foreignobject" &&
+          !(parent?.namespace === "svg" && parent?.name === "title")
         ) {
           while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
             stack.pop();
           }
           parent = currentNode(stack, root, bodyElement);
+        }
+        if (parent?.namespace === "svg" && parent?.name === "title" && SVG_TITLE_IGNORED_TAGS.has(name)) {
+          break;
         }
         if (!fragment && ns === "html" && (name === "td" || name === "th")) {
           ensureTableCellContext(stack, bodyElement);
@@ -1227,6 +1235,7 @@ function toLineCol(text, offset) {
 }
 
 const TABLE_END_TAGS = new Set(["table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption", "colgroup"]);
+const SVG_TITLE_IGNORED_TAGS = new Set(["table", "tbody", "thead", "tfoot", "tr", "td", "th"]);
 
 function isHeadNoscriptContext(stack) {
   if (!stack.length || stack[stack.length - 1]?.name !== "noscript") {

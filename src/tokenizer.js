@@ -1,5 +1,6 @@
 import { decodeCharacterReferences } from "./entities.js";
 import { ParseError } from "./errors.js";
+import { VOID_ELEMENTS } from "./constants.js";
 
 export const TokenKind = Object.freeze({
   START_TAG: "start_tag",
@@ -13,6 +14,7 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
   const tokens = [];
   const errors = [];
   const lowerHTML = html.toLowerCase();
+  const openElements = [{ name: "#document", namespace: "html" }];
 
   let i = 0;
   while (i < html.length) {
@@ -111,6 +113,7 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
         tokens.push({ kind: TokenKind.COMMENT, data: endToken.data, pos: lt });
       } else {
         tokens.push({ kind: TokenKind.END_TAG, name: endToken.name, pos: lt });
+        closeOpenElement(openElements, endToken.name);
       }
       i = end + 1;
       continue;
@@ -123,10 +126,11 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
       continue;
     }
     const { name, attrs, selfClosing } = parsed;
+    const namespace = inferTokenizerNamespace(name, openElements[openElements.length - 1]?.namespace || "html", attrs || {});
     tokens.push({ kind: TokenKind.START_TAG, name, attrs, selfClosing, pos: lt });
     i = end + 1;
 
-    if (!selfClosing && shouldConsumeRawText(name)) {
+    if (!selfClosing && shouldConsumeRawText(name, namespace)) {
       const closeIdx = findRawCloseIndex(lowerHTML, i, name);
       if (closeIdx < 0) {
         const remaining = html.slice(i);
@@ -142,11 +146,17 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
         emitText(rawText, i, tokens, !shouldDecodeEntitiesInRaw(name));
       }
       tokens.push({ kind: TokenKind.END_TAG, name, pos: closeIdx });
+      closeOpenElement(openElements, name);
       const closeEnd = findTagCloseIndex(html, closeIdx + 2 + name.length);
       if (closeEnd < 0) {
         break;
       }
       i = closeEnd + 1;
+      continue;
+    }
+
+    if (!selfClosing && !VOID_ELEMENTS.has(name)) {
+      openElements.push({ name, namespace });
     }
   }
 
@@ -297,7 +307,7 @@ function parseEndTag(rawInner) {
   return { kind: "end_tag", name };
 }
 
-function shouldConsumeRawText(tagName) {
+function shouldConsumeRawText(tagName, namespace = "html") {
   return tagName === "script" ||
     tagName === "style" ||
     tagName === "xmp" ||
@@ -305,8 +315,7 @@ function shouldConsumeRawText(tagName) {
     tagName === "noembed" ||
     tagName === "noframes" ||
     tagName === "plaintext" ||
-    tagName === "textarea" ||
-    tagName === "title";
+    (namespace === "html" && (tagName === "textarea" || tagName === "title"));
 }
 
 function shouldDecodeEntitiesInRaw(tagName) {
@@ -409,6 +418,40 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
 function isTagBoundary(text, index) {
   const ch = text[index] || "";
   return ch === ">" || ch === "/" || /\s/.test(ch);
+}
+
+function inferTokenizerNamespace(tagName, parentNamespace, attrs = {}) {
+  if (tagName === "svg") {
+    return "svg";
+  }
+  if (tagName === "math") {
+    return "math";
+  }
+  if (parentNamespace === "svg") {
+    if (tagName === "foreignobject") {
+      return "html";
+    }
+    return "svg";
+  }
+  if (parentNamespace === "math") {
+    if (tagName === "mi" || tagName === "mo" || tagName === "mn" || tagName === "ms" || tagName === "mtext") {
+      return "html";
+    }
+    if (tagName === "annotation-xml" && (attrs.encoding || "").toLowerCase() === "text/html") {
+      return "html";
+    }
+    return "math";
+  }
+  return "html";
+}
+
+function closeOpenElement(openElements, name) {
+  for (let j = openElements.length - 1; j >= 1; j -= 1) {
+    if (openElements[j].name === name) {
+      openElements.length = j;
+      return;
+    }
+  }
 }
 
 function findTagCloseIndex(text, fromIndex) {
