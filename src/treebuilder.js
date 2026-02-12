@@ -706,6 +706,19 @@ function sprinkleFormattingOnBlockDescendants(rootNode, formattingName, formatti
       child.removeChild(only);
       clone.appendChild(only);
     }
+    const rest = child.children.filter((node) => node !== clone);
+    if (
+      !clone.children.length &&
+      rest.length === 1 &&
+      !isInlineLikeNode(rest[0]) &&
+      rest[0].children &&
+      rest[0].children.length === 1 &&
+      rest[0].children[0].children &&
+      rest[0].children[0].children.length === 0
+    ) {
+      child.removeChild(rest[0]);
+      clone.appendChild(rest[0]);
+    }
     sprinkleFormattingOnBlockDescendants(child, formattingName, formattingAttrs);
   }
 }
