@@ -169,15 +169,45 @@ function renderTestFormat(node, indent, lines) {
     return;
   }
 
-  const ns = node.namespace && node.namespace !== "html" ? `${node.namespace} ${node.name}` : node.name;
+  const displayName = formatForeignTagName(node);
+  const ns = node.namespace && node.namespace !== "html" ? `${node.namespace} ${displayName}` : displayName;
   lines.push(`${prefix}<${ns}>`);
   const attrs = node.attrs || {};
-  for (const [key, value] of Object.entries(attrs)) {
+  const formattedAttrs = Object.entries(attrs)
+    .map(([key, value]) => [formatForeignAttrName(node, key), value])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [key, value] of formattedAttrs) {
     lines.push(`${prefix}  ${key}="${value ?? ""}"`);
   }
   for (const child of coalesceTextNodes(node.children)) {
     renderTestFormat(child, indent + 1, lines);
   }
+}
+
+function formatForeignTagName(node) {
+  if (!node || node.namespace !== "svg") {
+    return node?.name;
+  }
+  if (node.name === "foreignobject") {
+    return "foreignObject";
+  }
+  return node.name;
+}
+
+function formatForeignAttrName(node, key) {
+  if (!node || node.namespace === "html") {
+    return key;
+  }
+  if (key.startsWith("xml:")) {
+    return `xml ${key.slice(4)}`;
+  }
+  if (key.startsWith("xlink:")) {
+    return `xlink ${key.slice(6)}`;
+  }
+  if (node.namespace === "math" && key === "definitionurl") {
+    return "definitionURL";
+  }
+  return key;
 }
 
 function coalesceTextNodes(children) {

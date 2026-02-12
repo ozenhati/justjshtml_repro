@@ -1,4 +1,4 @@
-import { RAWTEXT_ELEMENTS } from "./constants.js";
+import { decodeCharacterReferences } from "./entities.js";
 import { ParseError } from "./errors.js";
 
 export const TokenKind = Object.freeze({
@@ -12,6 +12,7 @@ export const TokenKind = Object.freeze({
 export function tokenizeHTML(html, { collectErrors = false } = {}) {
   const tokens = [];
   const errors = [];
+  const lowerHTML = html.toLowerCase();
 
   let i = 0;
   while (i < html.length) {
@@ -48,6 +49,17 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
       continue;
     }
 
+    if (html.startsWith("<![CDATA[", lt)) {
+      const end = html.indexOf("]]>", lt + 9);
+      if (end < 0) {
+        emitText(html.slice(lt + 9), lt + 9, tokens, true);
+        break;
+      }
+      emitText(html.slice(lt + 9, end), lt + 9, tokens, true);
+      i = end + 3;
+      continue;
+    }
+
     const end = html.indexOf(">", lt + 1);
     if (end < 0) {
       if (html.startsWith("<?", lt)) {
@@ -59,7 +71,8 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
       break;
     }
 
-    const rawTag = html.slice(lt + 1, end).trim();
+    const rawInner = html.slice(lt + 1, end);
+    const rawTag = rawInner.trim();
     if (!rawTag) {
       i = end + 1;
       continue;
@@ -77,29 +90,32 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
     }
 
     if (rawTag.startsWith("/")) {
-      const name = rawTag.slice(1).trim().toLowerCase();
-      tokens.push({ kind: TokenKind.END_TAG, name, pos: lt });
+      const endToken = parseEndTag(rawInner);
+      if (endToken.kind === "comment") {
+        tokens.push({ kind: TokenKind.COMMENT, data: endToken.data, pos: lt });
+      } else {
+        tokens.push({ kind: TokenKind.END_TAG, name: endToken.name, pos: lt });
+      }
       i = end + 1;
       continue;
     }
 
-    const selfClosing = rawTag.endsWith("/");
-    const body = selfClosing ? rawTag.slice(0, -1).trim() : rawTag;
-    const spaceIdx = body.search(/\s/);
-    const name = (spaceIdx < 0 ? body : body.slice(0, spaceIdx)).toLowerCase();
-    const attrRaw = spaceIdx < 0 ? "" : body.slice(spaceIdx + 1);
-    const attrs = parseAttrs(attrRaw);
+    const parsed = parseStartTag(rawInner);
+    if (!parsed || !parsed.name) {
+      emitText(html.slice(lt, end + 1), lt, tokens);
+      i = end + 1;
+      continue;
+    }
+    const { name, attrs, selfClosing } = parsed;
     tokens.push({ kind: TokenKind.START_TAG, name, attrs, selfClosing, pos: lt });
     i = end + 1;
 
-    if (!selfClosing && RAWTEXT_ELEMENTS.has(name)) {
-      const closing = `</${name}>`;
-      const lower = html.toLowerCase();
-      const closeIdx = lower.indexOf(closing, i);
+    if (!selfClosing && shouldConsumeRawText(name)) {
+      const closeIdx = findRawCloseIndex(lowerHTML, i, name);
       if (closeIdx < 0) {
         const remaining = html.slice(i);
         if (remaining) {
-          emitText(remaining, i, tokens);
+          emitText(remaining, i, tokens, !shouldDecodeEntitiesInRaw(name));
         }
         emitError(errors, collectErrors, "expected-closing-tag-but-got-eof", `Expected </${name}> before EOF`, i, html);
         break;
@@ -107,10 +123,10 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
 
       const rawText = html.slice(i, closeIdx);
       if (rawText) {
-        emitText(rawText, i, tokens, true);
+        emitText(rawText, i, tokens, !shouldDecodeEntitiesInRaw(name));
       }
       tokens.push({ kind: TokenKind.END_TAG, name, pos: closeIdx });
-      i = closeIdx + closing.length;
+      i = closeIdx + 2 + name.length + 1;
     }
   }
 
@@ -121,7 +137,13 @@ function emitText(text, pos, tokens, preserveEntities = false) {
   if (!text) {
     return;
   }
-  tokens.push({ kind: TokenKind.TEXT, data: preserveEntities ? text : decodeEntities(text), pos });
+  const normalized = preserveEntities
+    ? String(text).replaceAll("\u0000", "\ufffd")
+    : decodeCharacterReferences(text).replaceAll("\u0000", "");
+  if (!normalized) {
+    return;
+  }
+  tokens.push({ kind: TokenKind.TEXT, data: normalized, pos });
 }
 
 function emitError(errors, collectErrors, code, message, pos, html) {
@@ -138,19 +160,149 @@ function parseAttrs(raw) {
   let match;
   while ((match = attrPattern.exec(raw)) !== null) {
     const key = match[1].toLowerCase();
-    const value = decodeEntities(match[2] ?? match[3] ?? match[4] ?? "");
-    attrs[key] = value;
+    const value = decodeCharacterReferences(match[2] ?? match[3] ?? match[4] ?? "", { inAttribute: true });
+    if (!(key in attrs)) {
+      attrs[key] = value;
+    }
   }
   return attrs;
 }
 
-function decodeEntities(value) {
-  return value
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+function parseStartTag(rawInner) {
+  let i = 0;
+  const src = String(rawInner || "");
+  while (i < src.length && /\s/.test(src[i])) {
+    i += 1;
+  }
+
+  const nameStart = i;
+  while (i < src.length && !/[\s/>]/.test(src[i])) {
+    i += 1;
+  }
+  const name = src.slice(nameStart, i).toLowerCase();
+  if (!name) {
+    return null;
+  }
+
+  const attrs = {};
+  let selfClosing = false;
+
+  while (i < src.length) {
+    while (i < src.length && /\s/.test(src[i])) {
+      i += 1;
+    }
+    if (i >= src.length) {
+      break;
+    }
+    if (src[i] === "/") {
+      selfClosing = true;
+      i += 1;
+      while (i < src.length && /\s/.test(src[i])) {
+        i += 1;
+      }
+      continue;
+    }
+
+    const attrStart = i;
+    while (i < src.length && !/[\s=>/]/.test(src[i])) {
+      i += 1;
+    }
+    const rawKey = src.slice(attrStart, i).toLowerCase();
+    if (!rawKey) {
+      i += 1;
+      continue;
+    }
+
+    while (i < src.length && /\s/.test(src[i])) {
+      i += 1;
+    }
+
+    let value = "";
+    if (src[i] === "=") {
+      i += 1;
+      while (i < src.length && /\s/.test(src[i])) {
+        i += 1;
+      }
+      if (src[i] === '"' || src[i] === "'") {
+        const quote = src[i];
+        i += 1;
+        const valueStart = i;
+        while (i < src.length && src[i] !== quote) {
+          i += 1;
+        }
+        value = src.slice(valueStart, i);
+        if (src[i] === quote) {
+          i += 1;
+        }
+      } else {
+        const valueStart = i;
+        while (i < src.length && !/[\s>]/.test(src[i])) {
+          i += 1;
+        }
+        value = src.slice(valueStart, i);
+      }
+    }
+
+    if (!(rawKey in attrs)) {
+      attrs[rawKey] = decodeCharacterReferences(value, { inAttribute: true });
+    }
+  }
+
+  return { name, attrs, selfClosing };
+}
+
+function parseEndTag(rawInner) {
+  const src = String(rawInner || "");
+  let i = 0;
+  if (src[i] !== "/") {
+    return { kind: "comment", data: src };
+  }
+  i += 1;
+  if (/\s/.test(src[i] || "")) {
+    return { kind: "comment", data: src.slice(1) };
+  }
+  const start = i;
+  while (i < src.length && /[A-Za-z0-9:-]/.test(src[i])) {
+    i += 1;
+  }
+  const name = src.slice(start, i).toLowerCase();
+  if (!name) {
+    return { kind: "comment", data: src.slice(1) };
+  }
+  return { kind: "end_tag", name };
+}
+
+function shouldConsumeRawText(tagName) {
+  return tagName === "script" ||
+    tagName === "style" ||
+    tagName === "xmp" ||
+    tagName === "iframe" ||
+    tagName === "noembed" ||
+    tagName === "noframes" ||
+    tagName === "plaintext" ||
+    tagName === "textarea" ||
+    tagName === "title";
+}
+
+function shouldDecodeEntitiesInRaw(tagName) {
+  return tagName === "textarea" || tagName === "title";
+}
+
+function findRawCloseIndex(lowerHTML, offset, tagName) {
+  const needle = `</${tagName}`;
+  let i = lowerHTML.indexOf(needle, offset);
+  while (i >= 0) {
+    const after = lowerHTML[i + needle.length] || "";
+    if (after === ">" || /\s/.test(after) || after === "/") {
+      const closeEnd = lowerHTML.indexOf(">", i + needle.length);
+      if (closeEnd >= 0) {
+        return i;
+      }
+      return -1;
+    }
+    i = lowerHTML.indexOf(needle, i + 1);
+  }
+  return -1;
 }
 
 function toLineCol(text, offset) {

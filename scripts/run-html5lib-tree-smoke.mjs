@@ -23,35 +23,39 @@ const files = fs
 let passed = 0;
 let failed = 0;
 
-for (const filePath of files) {
-  const content = fs.readFileSync(filePath, "utf8");
-  const cases = parseDat(content).slice(0, maxCasesPerFile);
+  for (const filePath of files) {
+    const content = fs.readFileSync(filePath, "utf8");
+    const cases = parseDat(content).slice(0, maxCasesPerFile);
 
-  for (let i = 0; i < cases.length; i += 1) {
-    const tc = cases[i];
-    if (!tc.document) {
-      continue;
-    }
+    for (let i = 0; i < cases.length; i += 1) {
+      const tc = cases[i];
+      const expectedCandidates = Object.values(tc.documents || {}).filter(Boolean);
+      if (!expectedCandidates.length) {
+        continue;
+      }
 
-    const doc = tc.fragment
-      ? parseFragment(tc.data, { tagName: tc.fragment })
+      const doc = tc.fragmentContext
+      ? parseFragment(tc.data, tc.fragmentContext)
       : new JustHTML(tc.data, { collectErrors: true });
 
-    const actual = normalizeLines(toTestFormat(doc.root));
-    const expected = normalizeLines(tc.document);
+      const actual = normalizeLines(toTestFormat(doc.root));
+      const expected = expectedCandidates.map((value) => normalizeLines(value));
 
-    if (actual === expected) {
-      passed += 1;
-    } else {
-      failed += 1;
-      console.log(`FAIL ${path.basename(filePath)}#${i + 1}`);
-      console.log("Input:");
-      console.log(tc.data);
-      console.log("Expected:");
-      console.log(expected);
-      console.log("Actual:");
-      console.log(actual);
-      console.log("---");
+      if (expected.includes(actual)) {
+        passed += 1;
+      } else {
+        failed += 1;
+        console.log(`FAIL ${path.basename(filePath)}#${i + 1}`);
+        console.log("Input:");
+        console.log(tc.data);
+        console.log("Expected (acceptable variants):");
+        for (const item of expected) {
+          console.log(item);
+          console.log("...");
+        }
+        console.log("Actual:");
+        console.log(actual);
+        console.log("---");
     }
   }
 }
@@ -66,19 +70,25 @@ function parseDat(content) {
   const lines = content.split("\n");
   let current = null;
   let mode = null;
+  let scriptMode = "default";
 
   for (const line of lines) {
     if (line.startsWith("#")) {
       const directive = line.slice(1).trim();
       if (directive === "data") {
-        if (current && (current.data || current.document)) {
+        if (current && (current.data || Object.keys(current.documents).length > 0)) {
           out.push(current);
         }
-        current = { data: "", document: "", fragment: null };
+        current = { data: "", documents: {}, fragmentContext: null };
         mode = "data";
+        scriptMode = "default";
         continue;
       }
       if (!current) {
+        continue;
+      }
+      if (directive === "script-on" || directive === "script-off") {
+        scriptMode = directive;
         continue;
       }
       mode = directive;
@@ -94,25 +104,38 @@ function parseDat(content) {
       continue;
     }
     if (mode === "document") {
-      current.document += `${line}\n`;
+      current.documents[scriptMode] = `${current.documents[scriptMode] || ""}${line}\n`;
       continue;
     }
     if (mode === "document-fragment") {
-      current.fragment = line.trim();
+      current.fragmentContext = parseFragmentContext(line.trim());
       continue;
     }
   }
 
-  if (current && (current.data || current.document)) {
+  if (current && (current.data || Object.keys(current.documents).length > 0)) {
     out.push(current);
   }
 
   for (const tc of out) {
     tc.data = tc.data.replace(/\n$/, "");
-    tc.document = tc.document.replace(/\n$/, "");
+    for (const key of Object.keys(tc.documents)) {
+      tc.documents[key] = tc.documents[key].replace(/\n$/, "");
+    }
   }
 
   return out;
+}
+
+function parseFragmentContext(value) {
+  if (!value) {
+    return null;
+  }
+  const parts = value.split(/\s+/).filter(Boolean);
+  if (parts.length === 2 && (parts[0] === "svg" || parts[0] === "math")) {
+    return { namespace: parts[0], tagName: parts[1] };
+  }
+  return { tagName: value };
 }
 
 function normalizeLines(value) {

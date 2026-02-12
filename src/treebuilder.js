@@ -5,6 +5,11 @@ import { TokenKind } from "./tokenizer.js";
 
 const HEAD_TAGS = new Set(["base", "link", "meta", "noscript", "script", "style", "template", "title"]);
 const FORMATTING_TAGS = new Set(["a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u"]);
+const FOREIGN_BREAKOUT_TAGS = new Set([
+  "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt", "em", "embed", "h1", "h2", "h3",
+  "h4", "h5", "h6", "head", "hr", "i", "img", "li", "listing", "menu", "meta", "nobr", "ol", "p", "pre", "ruby", "s",
+  "small", "span", "strong", "strike", "sub", "sup", "table", "tt", "u", "ul", "var"
+]);
 const A_REPARENT_BLOCKS = new Set(["div", "address"]);
 const CLOSE_P_ON_START = new Set([
   "address",
@@ -50,25 +55,43 @@ export function buildTree(tokens, html, options = {}) {
 
   const root = fragment ? new DocumentFragment() : new Document();
   const errors = [];
+  const fragmentNamespace = fragmentContext?.namespace || "html";
+  const fragmentContextTag = fragmentContext?.tagName ? String(fragmentContext.tagName).toLowerCase() : null;
 
   let documentElement = null;
   let headElement = null;
   let bodyElement = null;
+  let seenDoctype = false;
+  let afterBody = false;
+  let framesetOk = true;
 
   const stack = [root];
 
   for (const token of tokens) {
     switch (token.kind) {
       case TokenKind.DOCTYPE: {
-        if (fragment) {
+        if (fragment || seenDoctype || documentElement) {
           break;
         }
+        seenDoctype = true;
         const dt = new Doctype(token.name, token.publicId, token.systemId);
         maybeSetLocation(dt, token.pos, html, trackNodeLocations);
         root.appendChild(dt);
         break;
       }
       case TokenKind.COMMENT: {
+        if (!fragment && !documentElement) {
+          const comment = new Comment(token.data);
+          maybeSetLocation(comment, token.pos, html, trackNodeLocations);
+          root.appendChild(comment);
+          break;
+        }
+        if (!fragment && afterBody) {
+          const comment = new Comment(token.data);
+          maybeSetLocation(comment, token.pos, html, trackNodeLocations);
+          root.appendChild(comment);
+          break;
+        }
         if (!fragment) {
           ensureScaffold(root, () => ({ documentElement, headElement, bodyElement }), (next) => {
             documentElement = next.documentElement;
@@ -95,6 +118,12 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.TEXT: {
+        if (!fragment && token.data && /\S/.test(token.data)) {
+          framesetOk = false;
+        }
+        if (!fragment && token.data && /\S/.test(token.data)) {
+          afterBody = false;
+        }
         if (!fragment) {
           ensureScaffold(root, () => ({ documentElement, headElement, bodyElement }), (next) => {
             documentElement = next.documentElement;
@@ -116,10 +145,17 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.START_TAG: {
+        afterBody = false;
         const name = token.name;
         if (fragment) {
+          if (fragmentNamespace !== "html" && (name === "html" || name === "head" || name === "body")) {
+            break;
+          }
           const parent = currentNode(stack, root);
-          const ns = inferNamespace(name, parent);
+          const defaultNamespace = parent === root
+            ? fragmentDefaultNamespace(fragmentNamespace, fragmentContextTag)
+            : fragmentNamespace;
+          const ns = inferNamespace(name, parent, defaultNamespace, token.attrs || {});
           const element = createElement(name, token.attrs, ns);
           maybeSetLocation(element, token.pos, html, trackNodeLocations);
           parent.appendChild(element);
@@ -135,6 +171,25 @@ export function buildTree(tokens, html, options = {}) {
           bodyElement = next.bodyElement;
         });
         ensureDocumentOnStack(stack, documentElement);
+
+        if (name === "frameset" && framesetOk) {
+          if (bodyElement && bodyElement.parent === documentElement && bodyElement.children.length === 0) {
+            documentElement.removeChild(bodyElement);
+            bodyElement = null;
+          }
+          const frameset = createElement("frameset", token.attrs, "html");
+          maybeSetLocation(frameset, token.pos, html, trackNodeLocations);
+          documentElement.appendChild(frameset);
+          stack.length = 2;
+          stack.push(frameset);
+          break;
+        }
+
+        if (name === "input" && String(token.attrs?.type || "").toLowerCase() !== "hidden") {
+          framesetOk = false;
+        } else if (name !== "html" && name !== "head" && name !== "meta" && name !== "title" && name !== "link" && name !== "style" && name !== "script" && name !== "noframes" && name !== "template") {
+          framesetOk = false;
+        }
 
         if (name === "html") {
           if (!documentElement) {
@@ -225,7 +280,7 @@ export function buildTree(tokens, html, options = {}) {
           }
         }
 
-        const ns = inferNamespace(name, parent);
+        const ns = inferNamespace(name, parent, "html", token.attrs || {});
         const element = createElement(name, token.attrs, ns);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
@@ -244,6 +299,13 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.END_TAG: {
+        if (fragment && fragmentNamespace !== "html") {
+          if (token.name === "p" || token.name === "br") {
+            const synthetic = createElement(token.name, {}, "html");
+            root.appendChild(synthetic);
+            break;
+          }
+        }
         const foundIndex = findOpenElement(stack, token.name);
         if (foundIndex < 0) {
           pushTreeError(errors, collectErrors, "unexpected-end-tag", `Unexpected </${token.name}> end tag`, token.pos, html);
@@ -282,6 +344,9 @@ export function buildTree(tokens, html, options = {}) {
           }
         }
         stack.length = foundIndex;
+        if (token.name === "body" || token.name === "html") {
+          afterBody = true;
+        }
         break;
       }
       default:
@@ -623,15 +688,53 @@ function findNearestIndex(stack, name) {
   return -1;
 }
 
-function inferNamespace(tagName, parent) {
+function inferNamespace(tagName, parent, defaultNamespace = "html", attrs = {}) {
   if (tagName === "svg") {
     return "svg";
   }
   if (tagName === "math") {
     return "math";
   }
+  if (tagName === "mglyph" || tagName === "malignmark") {
+    return "math";
+  }
+  if (defaultNamespace !== "html") {
+    if (FOREIGN_BREAKOUT_TAGS.has(tagName)) {
+      return "html";
+    }
+    if (tagName === "font" && (attrs.color != null || attrs.face != null || attrs.size != null)) {
+      return "html";
+    }
+  }
   if (parent && parent.namespace && parent.namespace !== "html") {
+    if (FOREIGN_BREAKOUT_TAGS.has(tagName)) {
+      return "html";
+    }
+    if (tagName === "font") {
+      if (attrs.color != null || attrs.face != null || attrs.size != null) {
+        return "html";
+      }
+    }
+    if (parent.name === "foreignobject") {
+      return "html";
+    }
     return parent.namespace;
+  }
+  return defaultNamespace || "html";
+}
+
+function fragmentDefaultNamespace(namespace, contextTag) {
+  if (namespace === "svg") {
+    if (contextTag === "foreignobject" || contextTag === "desc" || contextTag === "title") {
+      return "html";
+    }
+    return "svg";
+  }
+  if (namespace === "math") {
+    if (contextTag === "mi" || contextTag === "mo" || contextTag === "mn" || contextTag === "ms" || contextTag === "mtext" || contextTag === "annotation-xml") {
+      return "html";
+    }
+    return "math";
   }
   return "html";
 }
