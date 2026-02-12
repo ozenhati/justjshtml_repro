@@ -53,7 +53,11 @@ export function buildTree(tokens, html, options = {}) {
         }
         const textNode = new Text(token.data);
         maybeSetLocation(textNode, token.pos, html, trackNodeLocations);
-        currentNode(stack, root, bodyElement).appendChild(textNode);
+        if (!fragment && shouldFosterParentText(stack)) {
+          fosterParentInsert(textNode, stack, bodyElement);
+        } else {
+          currentNode(stack, root, bodyElement).appendChild(textNode);
+        }
         break;
       }
       case TokenKind.START_TAG: {
@@ -112,8 +116,24 @@ export function buildTree(tokens, html, options = {}) {
           break;
         }
 
-        const parent = chooseParent(stack, bodyElement, headElement, name);
+        let parent = chooseParent(stack, bodyElement, headElement, name);
         alignStackForParent(stack, parent, documentElement, headElement, bodyElement);
+
+        if (!fragment && shouldFosterParentElement(stack, name)) {
+          const fostered = createElement(name, token.attrs);
+          maybeSetLocation(fostered, token.pos, html, trackNodeLocations);
+          fosterParentInsert(fostered, stack, bodyElement);
+          if (!token.selfClosing && !VOID_ELEMENTS.has(name)) {
+            stack.push(fostered);
+          }
+          break;
+        }
+
+        if (!fragment && (name === "td" || name === "th")) {
+          ensureTableCellContext(stack, bodyElement);
+          parent = currentNode(stack, root, bodyElement);
+        }
+
         const element = createElement(name, token.attrs);
         maybeSetLocation(element, token.pos, html, trackNodeLocations);
         parent.appendChild(element);
@@ -244,6 +264,83 @@ function alignStackForParent(stack, parent, documentElement, headElement, bodyEl
     stack.push(headElement);
     return;
   }
+}
+
+function shouldFosterParentText(stack) {
+  const top = stack[stack.length - 1];
+  if (!top) {
+    return false;
+  }
+  return top.name === "table" || top.name === "tbody" || top.name === "thead" || top.name === "tfoot" || top.name === "tr";
+}
+
+function shouldFosterParentElement(stack, tagName) {
+  const top = stack[stack.length - 1];
+  if (!top || top.name !== "table") {
+    return false;
+  }
+  if (tagName === "caption" || tagName === "colgroup" || tagName === "tbody" || tagName === "tfoot" || tagName === "thead" || tagName === "tr") {
+    return false;
+  }
+  return true;
+}
+
+function fosterParentInsert(node, stack, bodyElement) {
+  const tableIndex = findNearestIndex(stack, "table");
+  if (tableIndex < 0) {
+    if (bodyElement) {
+      bodyElement.appendChild(node);
+    }
+    return;
+  }
+  const table = stack[tableIndex];
+  const parent = table.parent || bodyElement;
+  if (!parent) {
+    return;
+  }
+  parent.insertBefore(node, table);
+}
+
+function ensureTableCellContext(stack, bodyElement) {
+  const trIndex = findNearestIndex(stack, "tr");
+  if (trIndex >= 0) {
+    stack.length = trIndex + 1;
+    return;
+  }
+  const tableIndex = findNearestIndex(stack, "table");
+  if (tableIndex < 0) {
+    return;
+  }
+  const table = stack[tableIndex];
+  let tbody = null;
+  for (let i = table.children.length - 1; i >= 0; i -= 1) {
+    const child = table.children[i];
+    if (child.name === "tbody") {
+      tbody = child;
+      break;
+    }
+  }
+  if (!tbody) {
+    tbody = new Element("tbody", {});
+    table.appendChild(tbody);
+  }
+  const tr = new Element("tr", {});
+  tbody.appendChild(tr);
+  stack.length = tableIndex + 1;
+  stack.push(tbody);
+  stack.push(tr);
+  if (bodyElement && table.parent == null) {
+    bodyElement.appendChild(table);
+  }
+}
+
+function findNearestIndex(stack, name) {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    if (stack[i] && stack[i].name === name) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 function maybeSetLocation(node, offset, html, enabled) {
