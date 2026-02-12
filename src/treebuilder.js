@@ -642,6 +642,7 @@ export function buildTree(tokens, html, options = {}) {
       bodyElement = next.bodyElement;
     });
   }
+  fillSelectedContent(root);
   return { root, errors };
 }
 
@@ -1250,5 +1251,31 @@ function closeHeadNoscriptContext(stack) {
       continue;
     }
     break;
+  }
+}
+
+function fillSelectedContent(root) {
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node.name === "select" && (node.namespace || "html") === "html") {
+      const button = node.children.find((child) => child?.name === "button");
+      const selectedContent = button?.children?.find((child) => child?.name === "selectedcontent");
+      if (selectedContent && selectedContent.children.length === 0) {
+        const options = node.children.filter((child) => child?.name === "option");
+        if (options.length) {
+          const selected = options.find((opt) => Object.prototype.hasOwnProperty.call(opt.attrs || {}, "selected")) || options[0];
+          for (const child of selected.children) {
+            selectedContent.appendChild(child.cloneNode(true));
+          }
+        }
+      }
+    }
+    for (let i = node.children.length - 1; i >= 0; i -= 1) {
+      stack.push(node.children[i]);
+    }
   }
 }
