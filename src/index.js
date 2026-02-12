@@ -131,7 +131,7 @@ export class Node {
   }
 
   query(selector) {
-    if (!/^\*|[a-zA-Z][a-zA-Z0-9_-]*$/.test(selector)) {
+    if (!/^(\*|[a-zA-Z][a-zA-Z0-9_-]*)$/.test(selector)) {
       throw new Error(`Unsupported selector in phase 0: ${selector}`);
     }
     const tag = selector === "*" ? null : selector.toLowerCase();
@@ -487,6 +487,10 @@ export function* stream(input, options = {}) {
   while (stack.length > 0) {
     const node = stack.pop();
     if (!node) {
+      continue;
+    }
+    if (node._end) {
+      yield ["end", node._end];
       continue;
     }
     if (node.name === "#text") {

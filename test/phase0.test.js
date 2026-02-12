@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { JustHTML } from "../src/index.js";
+import { JustHTML, stream } from "../src/index.js";
 
 test("phase 0 smoke test: parse simple valid document and return expected core results", () => {
   const input = "<!doctype html><html><body><p>Hello</p></body></html>";
@@ -21,4 +21,19 @@ test("phase 0 smoke test: parse simple valid document and return expected core r
   assert.equal(paragraph.toText(), "Hello");
   assert.equal(doc.toText(), "Hello");
   assert.equal(doc.toHTML({ pretty: false }), input);
+});
+
+test("phase 0 stream emits start/text/end events for simple tree", () => {
+  const input = "<html><body><p>Hello</p></body></html>";
+  const events = [...stream(input)];
+
+  assert.deepEqual(events, [
+    ["start", ["html", {}]],
+    ["start", ["body", {}]],
+    ["start", ["p", {}]],
+    ["text", "Hello"],
+    ["end", "p"],
+    ["end", "body"],
+    ["end", "html"]
+  ]);
 });
