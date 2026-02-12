@@ -347,7 +347,7 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
     }
 
     if (scriptDataEscaped && !scriptDataDoubleEscaped && lowerHTML.startsWith("<script", i) && isTagBoundary(lowerHTML, i + 7)) {
-      const end = findTagCloseIndex(lowerHTML, i + 7);
+      const end = lowerHTML.indexOf(">", i + 7);
       if (end < 0) {
         return -1;
       }
@@ -357,7 +357,7 @@ function findScriptRawCloseIndex(lowerHTML, offset) {
     }
 
     if (scriptDataDoubleEscaped && lowerHTML.startsWith("</script", i) && isTagBoundary(lowerHTML, i + 8)) {
-      const end = findTagCloseIndex(lowerHTML, i + 8);
+      const end = lowerHTML.indexOf(">", i + 8);
       if (end < 0) {
         return -1;
       }

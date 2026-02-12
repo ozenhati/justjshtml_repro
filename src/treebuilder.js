@@ -613,7 +613,6 @@ export function buildTree(tokens, html, options = {}) {
       bodyElement = next.bodyElement;
     });
   }
-
   return { root, errors };
 }
 
