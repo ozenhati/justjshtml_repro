@@ -46,7 +46,6 @@ const CLOSE_P_ON_START = new Set([
   "section",
   "search",
   "summary",
-  "table",
   "ul"
 ]);
 
@@ -86,6 +85,17 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.COMMENT: {
+        const cdataMatch = typeof token.data === "string" && token.data.match(/^\[CDATA\[([\s\S]*)\]\]$/);
+        if (cdataMatch) {
+          const parent = stack[stack.length - 1];
+          if (parent?.namespace && parent.namespace !== "html") {
+            const normalized = cdataMatch[1].replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+            const cdataText = new Text(normalized);
+            maybeSetLocation(cdataText, token.pos, html, trackNodeLocations);
+            parent.appendChild(cdataText);
+            break;
+          }
+        }
         if (!fragment && !documentElement) {
           const comment = new Comment(token.data);
           maybeSetLocation(comment, token.pos, html, trackNodeLocations);
@@ -124,7 +134,14 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.TEXT: {
-        const textForFrameset = (token.data || "").replaceAll("\u0000", "");
+        if (!fragment && stack[stack.length - 1]?.name === "head" && /\S/.test(token.data || "")) {
+          stack.pop();
+        }
+        let tokenData = token.data || "";
+        if (!fragment && seenDoctype && !documentElement && tokenData.startsWith("\n")) {
+          tokenData = tokenData.slice(1);
+        }
+        const textForFrameset = tokenData.replaceAll("\u0000", "");
         if (!fragment && textForFrameset && /\S/.test(textForFrameset)) {
           framesetOk = false;
         }
@@ -142,10 +159,10 @@ export function buildTree(tokens, html, options = {}) {
           });
           ensureDocumentOnStack(stack, documentElement);
         }
-        if (!token.data) {
+        if (!tokenData) {
           break;
         }
-        let textData = token.data;
+        let textData = tokenData;
         const parentForText = currentNode(stack, root, bodyElement);
         if (parentForText?.namespace === "html") {
           if (parentForText.name === "script" || parentForText.name === "style" || parentForText.name === "plaintext") {

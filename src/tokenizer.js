@@ -52,10 +52,10 @@ export function tokenizeHTML(html, { collectErrors = false } = {}) {
     if (html.startsWith("<![CDATA[", lt)) {
       const end = html.indexOf("]]>", lt + 9);
       if (end < 0) {
-        emitText(html.slice(lt + 9), lt + 9, tokens, true);
+        tokens.push({ kind: TokenKind.COMMENT, data: `[CDATA[${html.slice(lt + 9)}`, pos: lt });
         break;
       }
-      emitText(html.slice(lt + 9, end), lt + 9, tokens, true);
+      tokens.push({ kind: TokenKind.COMMENT, data: `[CDATA[${html.slice(lt + 9, end)}]]`, pos: lt });
       i = end + 3;
       continue;
     }
@@ -469,7 +469,7 @@ function parseDoctype(chunk) {
   out.name = readUntilSpace();
   skipSpaces();
 
-  const kw = readKeyword();
+  const kw = readKeywordToken();
   if (kw === "public") {
     skipSpaces();
     out.publicId = readQuotedOrEmpty();
@@ -515,6 +515,23 @@ function parseDoctype(chunk) {
     return word;
   }
 
+  function readKeywordToken() {
+    const save = i;
+    const rest = text.slice(i).toLowerCase();
+    if (rest.startsWith("public")) {
+      i += 6;
+      return "public";
+    }
+    if (rest.startsWith("system")) {
+      i += 6;
+      return "system";
+    }
+    return readKeyword() || (() => {
+      i = save;
+      return "";
+    })();
+  }
+
   function readQuotedOrEmpty() {
     if (i >= text.length) {
       return null;
@@ -534,4 +551,42 @@ function parseDoctype(chunk) {
     }
     return value;
   }
+}
+
+function findDoctypeCloseIndex(text, start) {
+  let quote = "";
+  let bracketDepth = 0;
+  for (let i = Math.max(0, start); i < text.length; i += 1) {
+    const ch = text[i];
+    if (!quote && text.startsWith("<!--", i)) {
+      const commentEnd = text.indexOf("-->", i + 4);
+      if (commentEnd < 0) {
+        return -1;
+      }
+      i = commentEnd + 2;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth += 1;
+      continue;
+    }
+    if (ch === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+      continue;
+    }
+    if (ch === ">" && bracketDepth === 0) {
+      return i;
+    }
+  }
+  return -1;
 }
