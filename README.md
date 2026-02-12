@@ -1,21 +1,18 @@
 # justjshtml
 
-`justjshtml` is a dependency-free JavaScript HTML parser inspired by [justhtml](https://github.com/EmilStenstrom/justhtml).
-Background: this project was recreated with codex-5.3 to compare time taken and token consumption against an earlier model generation.
+Dependency-free JavaScript HTML5 parser (browser + Node.js) built as a port of the Python project JustHTML.
 
-It is designed to run in:
-- Browsers (via ES modules)
-- Node.js (via ES modules)
-- Other JS runtimes that support standard ESM
+Primary goal: pass the full html5lib-tests suite (tokenizer, tree-construction, encoding, serializer fixtures) using only plain JavaScript.
 
-The long-term goal is high compatibility with `html5lib-tests` tree-construction behavior while keeping a minimal, zero-dependency implementation.
+Background on this project: Simon Willison had ported JustHTML from Python to JS with Codex CLI and Gpt-5.2 in 4.5 hours during December 2025 (you can read his blog (here)[https://simonwillison.net/2025/Dec/15/porting-justhtml/]). Now that GPT-5.3-Codex is out, I recreated his experiment in under an hour (the ~4.9x speedup is incredible)!
+
 
 ## Attribution / Acknowledgements
 
 - **JustHTML (Python)** by Emil Stenstrom: `justjshtml` is a JavaScript port intended to match its behavior and API surface where practical. <https://github.com/EmilStenstrom/justhtml>
 - **html5lib-tests** by the html5lib project: used as the primary conformance test suite. <https://github.com/html5lib/html5lib-tests>
 - **html5ever** by the Servo project: JustHTML started as a Python port of html5ever, and that architecture heavily influenced this port as well. <https://github.com/servo/html5ever>
-- **Simon Willison**: playground UI work here recreates/adapts the JustHTML tool experience from <https://tools.simonwillison.net/justhtml>, implemented fully in JavaScript (no Pyodide). Additional background and context: <https://simonwillison.net/2025/Dec/15/porting-justhtml/>
+- **Simon Willison**:
 
 ## Status
 
