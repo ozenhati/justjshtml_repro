@@ -393,6 +393,25 @@ export function buildTree(tokens, html, options = {}) {
           const tableIndex = findNearestIndex(stack, "table");
           const topNs = currentNode(stack, root, bodyElement)?.namespace || "html";
           if (tableIndex >= 0 && topNs === "html") {
+            if (name === "col") {
+              const table = stack[tableIndex];
+              let colgroup = null;
+              for (let i = table.children.length - 1; i >= 0; i -= 1) {
+                const child = table.children[i];
+                if (child?.name === "colgroup") {
+                  colgroup = child;
+                  break;
+                }
+              }
+              if (!colgroup) {
+                colgroup = createElement("colgroup", {}, "html");
+                table.appendChild(colgroup);
+              }
+              const col = createElement("col", token.attrs, "html");
+              maybeSetLocation(col, token.pos, html, trackNodeLocations);
+              colgroup.appendChild(col);
+              break;
+            }
             if (name === "form") {
               const table = stack[tableIndex];
               const formInTable = createElement("form", token.attrs, "html");
