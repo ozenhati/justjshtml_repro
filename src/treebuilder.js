@@ -656,6 +656,26 @@ export function buildTree(tokens, html, options = {}) {
             break;
           }
         }
+        if (!FORMATTING_TAGS.has(token.name) && token.name !== "p" && foundIndex >= 1) {
+          const aboveFormatting = stack.slice(foundIndex + 1).filter((node) => FORMATTING_TAGS.has(node.name));
+          if (aboveFormatting.length && stack[foundIndex].parent) {
+            let prev = stack[foundIndex];
+            let container = stack[foundIndex].parent;
+            const reopened = [];
+            for (const source of aboveFormatting) {
+              const clone = createElement(source.name, { ...(source.attrs || {}) }, "html");
+              insertAfter(container, clone, prev);
+              reopened.push(clone);
+              prev = clone;
+              container = clone;
+            }
+            stack.length = foundIndex;
+            for (const clone of reopened) {
+              stack.push(clone);
+            }
+            break;
+          }
+        }
         if ((token.name === "html" || token.name === "body") && stack.length > foundIndex + 1) {
           afterBody = true;
           break;
