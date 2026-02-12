@@ -27,6 +27,7 @@ const CLOSE_P_ON_START = new Set([
   "figure",
   "footer",
   "form",
+  "hgroup",
   "h1",
   "h2",
   "h3",
@@ -35,12 +36,15 @@ const CLOSE_P_ON_START = new Set([
   "h6",
   "header",
   "hr",
+  "listing",
   "main",
+  "menu",
   "nav",
   "ol",
   "p",
   "pre",
   "section",
+  "summary",
   "table",
   "ul"
 ]);
@@ -64,6 +68,7 @@ export function buildTree(tokens, html, options = {}) {
   let seenDoctype = false;
   let afterBody = false;
   let framesetOk = true;
+  let fragmentRootNamespaceOverride = null;
 
   const stack = [root];
 
@@ -118,11 +123,15 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.TEXT: {
-        if (!fragment && token.data && /\S/.test(token.data)) {
+        const textForFrameset = (token.data || "").replaceAll("\u0000", "");
+        if (!fragment && textForFrameset && /\S/.test(textForFrameset)) {
           framesetOk = false;
         }
-        if (!fragment && token.data && /\S/.test(token.data)) {
+        if (!fragment && textForFrameset && /\S/.test(textForFrameset)) {
           afterBody = false;
+        }
+        if (!fragment && framesetOk && !/\S/.test(textForFrameset) && !bodyElement) {
+          break;
         }
         if (!fragment) {
           ensureScaffold(root, () => ({ documentElement, headElement, bodyElement }), (next) => {
@@ -138,18 +147,41 @@ export function buildTree(tokens, html, options = {}) {
         let textData = token.data;
         const parentForText = currentNode(stack, root, bodyElement);
         if (parentForText?.namespace === "html") {
-          if (parentForText.name === "script" || parentForText.name === "style") {
+          if (parentForText.name === "script" || parentForText.name === "style" || parentForText.name === "plaintext") {
             textData = textData.replaceAll("\u0000", "\ufffd");
           } else {
             textData = textData.replaceAll("\u0000", "");
           }
         } else {
-          textData = textData.replaceAll("\u0000", "\ufffd");
+          const isSvgHtmlIntegrationPoint = parentForText?.namespace === "svg" &&
+            (parentForText?.name === "foreignobject" || parentForText?.name === "desc" || parentForText?.name === "title");
+          const isMathTextIntegrationPoint = parentForText?.namespace === "math" &&
+            (parentForText?.name === "mi" || parentForText?.name === "mo" || parentForText?.name === "mn" || parentForText?.name === "ms" || parentForText?.name === "mtext");
+          if (isSvgHtmlIntegrationPoint || isMathTextIntegrationPoint) {
+            textData = textData.replaceAll("\u0000", "");
+          } else {
+            textData = textData.replaceAll("\u0000", "\ufffd");
+          }
         }
         if (parentForText?.name === "pre" && parentForText.children.length === 0 && textData.startsWith("\n")) {
           textData = textData.slice(1);
         }
         if (!textData) {
+          break;
+        }
+        if (!fragment && parentForText?.namespace === "html" && parentForText?.name === "colgroup") {
+          const leadingWhitespace = textData.match(/^\s*/)?.[0] || "";
+          const remainder = textData.slice(leadingWhitespace.length);
+          if (leadingWhitespace) {
+            const wsNode = new Text(leadingWhitespace);
+            maybeSetLocation(wsNode, token.pos, html, trackNodeLocations);
+            parentForText.appendChild(wsNode);
+          }
+          if (remainder) {
+            const fostered = new Text(remainder);
+            maybeSetLocation(fostered, token.pos, html, trackNodeLocations);
+            fosterParentInsert(fostered, stack, bodyElement);
+          }
           break;
         }
         const textNode = new Text(textData);
@@ -165,14 +197,21 @@ export function buildTree(tokens, html, options = {}) {
         afterBody = false;
         const name = token.name;
         if (fragment) {
-          if (fragmentNamespace !== "html" && (name === "html" || name === "head" || name === "body")) {
+          if (fragmentNamespace !== "html" && (name === "html" || name === "head" || name === "body" || name === "frameset")) {
             break;
           }
-          const parent = currentNode(stack, root);
+          let parent = currentNode(stack, root);
           const defaultNamespace = parent === root
-            ? fragmentDefaultNamespace(fragmentNamespace, fragmentContextTag)
-            : fragmentNamespace;
+            ? (fragmentRootNamespaceOverride || fragmentDefaultNamespace(fragmentNamespace, fragmentContextTag))
+            : (parent?.namespace || "html");
           const ns = inferNamespace(name, parent, defaultNamespace, token.attrs || {});
+          if (ns === "html" && parent?.namespace && parent.namespace !== "html") {
+            while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
+              stack.pop();
+            }
+            parent = currentNode(stack, root);
+            fragmentRootNamespaceOverride = "html";
+          }
           const element = createElement(name, token.attrs, ns);
           maybeSetLocation(element, token.pos, html, trackNodeLocations);
           parent.appendChild(element);
@@ -190,8 +229,13 @@ export function buildTree(tokens, html, options = {}) {
         });
         ensureDocumentOnStack(stack, documentElement);
 
-        if (name === "frameset" && framesetOk) {
-          if (bodyElement && bodyElement.parent === documentElement && bodyElement.children.length === 0) {
+        const insertionPoint = currentNode(stack, root, bodyElement);
+        const inHtmlContext = !insertionPoint?.namespace || insertionPoint.namespace === "html";
+        if (name === "frameset" && inHtmlContext) {
+          if (!framesetOk) {
+            break;
+          }
+          if (bodyElement && bodyElement.parent === documentElement) {
             documentElement.removeChild(bodyElement);
             bodyElement = null;
           }
@@ -204,8 +248,6 @@ export function buildTree(tokens, html, options = {}) {
         }
 
         if (name === "input" && String(token.attrs?.type || "").toLowerCase() !== "hidden") {
-          framesetOk = false;
-        } else if (name !== "html" && name !== "head" && name !== "meta" && name !== "title" && name !== "link" && name !== "style" && name !== "script" && name !== "noframes" && name !== "template") {
           framesetOk = false;
         }
 
@@ -339,13 +381,19 @@ export function buildTree(tokens, html, options = {}) {
         break;
       }
       case TokenKind.END_TAG: {
-        if (fragment && fragmentNamespace !== "html") {
-          if (token.name === "p" || token.name === "br") {
+        if (fragment) {
+          const topNamespace = stack[stack.length - 1]?.namespace;
+          if ((token.name === "p" || token.name === "br") && topNamespace !== "html") {
+            let poppedForeign = false;
             while (stack.length > 1 && stack[stack.length - 1]?.namespace !== "html") {
+              poppedForeign = true;
               stack.pop();
             }
             const synthetic = createElement(token.name, {}, "html");
             root.appendChild(synthetic);
+            if (poppedForeign) {
+              fragmentRootNamespaceOverride = "html";
+            }
             break;
           }
         }
@@ -855,7 +903,7 @@ function fragmentDefaultNamespace(namespace, contextTag) {
     return "svg";
   }
   if (namespace === "math") {
-    if (contextTag === "mi" || contextTag === "mo" || contextTag === "mn" || contextTag === "ms" || contextTag === "mtext" || contextTag === "annotation-xml") {
+    if (contextTag === "mi" || contextTag === "mo" || contextTag === "mn" || contextTag === "ms" || contextTag === "mtext") {
       return "html";
     }
     return "math";

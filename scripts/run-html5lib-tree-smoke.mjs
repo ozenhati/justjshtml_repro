@@ -6,6 +6,7 @@ import { JustHTML, parseFragment, toTestFormat } from "../src/index.js";
 const testsRoot = process.env.HTML5LIB_TESTS || path.resolve("../html5lib-tests/tree-construction");
 const maxFiles = Number(process.env.MAX_FILES || 3);
 const maxCasesPerFile = Number(process.env.MAX_CASES_PER_FILE || 20);
+const fileFilter = (process.env.FILE_FILTER || "").trim().toLowerCase();
 
 if (!fs.existsSync(testsRoot)) {
   console.error(`html5lib tree-construction fixtures not found: ${testsRoot}`);
@@ -16,6 +17,7 @@ if (!fs.existsSync(testsRoot)) {
 const files = fs
   .readdirSync(testsRoot)
   .filter((name) => name.endsWith(".dat"))
+  .filter((name) => !fileFilter || name.toLowerCase().includes(fileFilter))
   .sort()
   .slice(0, maxFiles)
   .map((name) => path.join(testsRoot, name));
